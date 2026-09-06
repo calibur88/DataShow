@@ -10,7 +10,10 @@
   - `metadataCache.on("resolved")` 改为仅首次全量重建，之后走增量路径
     （该事件在启动后每次批量修改解析完成都会触发，原先每次都全量扫描）；
 - 写法现代化：`vault.getAbstractFileByPath` → `getFileByPath`、
-  `workspace.getLeaf(true)` → `getLeaf('tab')`（均为官方推荐形式）。
+  `workspace.getLeaf(true)` → `getLeaf('tab')`（均为官方推荐形式）；
+- **结果区改为标签页**：「查询结果 / 调试信息」两个标签切换——原 `<details>` 折叠面板
+  在移动端跟随正文长列表无法单独滚动，现调试列表限高 45vh 独立滚动；
+- **「显示 DSQL 调试信息」默认改为关闭**（已保存过设置的用户不受影响）。
 
 ## 1.6.0
 

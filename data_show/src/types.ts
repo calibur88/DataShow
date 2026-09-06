@@ -61,7 +61,7 @@ export function makeDefaultBoard(): BoardDef {
 
 export const DEFAULT_SETTINGS: DatashowSettings = {
   openInNewTab: true,
-  showDebug: true,
+  showDebug: false,
   decimalPlaces: 4,
   boards: [makeDefaultBoard()],
 };

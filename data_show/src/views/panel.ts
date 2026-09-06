@@ -167,6 +167,9 @@ export class DatashowPanelView extends ItemView {
     void this.plugin.saveSettings();
   }
 
+  /** 当前结果区标签页（每次重跑回到「查询结果」）。 */
+  private resultTab: "result" | "debug" = "result";
+
   /** 只重跑查询结果区（不动编辑器）。 */
   private renderResult(): void {
     if (!this.resultWrap || !this.resultWrap.isShown()) return;
@@ -175,34 +178,70 @@ export class DatashowPanelView extends ItemView {
 
     const wrap = this.resultWrap;
     wrap.empty();
-    wrap.createDiv({ cls: "datashow-result__label", text: "查询结果" });
 
     const sql = board.sql.trim();
     if (!sql) {
+      wrap.createDiv({ cls: "datashow-result__label", text: "查询结果" });
       wrap.createDiv({ cls: "datashow-result__empty", text: "尚未编写 DSQL，在上方输入即可。" });
       return;
     }
 
+    // 先执行一次查询，结果与调试数据分属两个标签页共用
+    let query: ReturnType<typeof parseQuery>;
+    let result: ReturnType<typeof executeQuery>;
+    let error: string | null = null;
+    let projMisses: Map<string, import("../query/executor").FieldMiss> | null = null;
     try {
-      const query = parseQuery(sql);
-      const result = executeQuery(query, this.plugin.store.all(), null, {
+      query = parseQuery(sql);
+      result = executeQuery(query, this.plugin.store.all(), null, {
         debug: this.plugin.settings.showDebug,
       });
+      if (this.plugin.settings.showDebug) {
+        projMisses = new Map<string, import("../query/executor").FieldMiss>();
+      }
+    } catch (err) {
+      error = err instanceof QueryParseError ? err.message : String((err as Error).message ?? err);
+      query = null as never;
+      result = null as never;
+    }
+
+    // 标签栏：查询结果 / 调试信息（移动端滚动问题：调试内容限高独立滚动）
+    const hasDebug = !error && !!result?.debug;
+    const tabs = wrap.createDiv({ cls: "datashow-tabs" });
+    const content = wrap.createDiv({ cls: "datashow-tabcontent" });
+    const btnResult = tabs.createEl("button", { cls: "datashow-tabs__tab", text: "查询结果" });
+    const btnDebug = hasDebug
+      ? tabs.createEl("button", { cls: "datashow-tabs__tab", text: "调试信息" })
+      : null;
+    this.resultTab = "result";
+
+    const renderPane = (): void => {
+      content.empty();
+      btnResult.toggleClass("is-active", this.resultTab === "result");
+      btnDebug?.toggleClass("is-active", this.resultTab === "debug");
+      if (this.resultTab === "debug" && btnDebug && result?.debug) {
+        this.renderDebug(content, result.debug, projMisses);
+        return;
+      }
+      content.createDiv({ cls: "datashow-result__label", text: "查询结果" });
+      if (error) {
+        content.createDiv({ cls: "datashow-result__error", text: error });
+        return;
+      }
       const view = board.viewOverride === "table" || board.viewOverride === "list"
         ? board.viewOverride
         : result.view;
-      // SELECT 投影在渲染期逐格求值，这里同步收集字段缺失，并入调试信息
-      const projMisses = this.plugin.settings.showDebug
-        ? new Map<string, import("../query/executor").FieldMiss>()
-        : null;
-      this.renderResultSet(wrap, view === "list", query.withoutId, result, projMisses);
-      if (result.debug) {
-        this.renderDebug(wrap, result.debug, projMisses);
-      }
-    } catch (err) {
-      const msg = err instanceof QueryParseError ? err.message : String((err as Error).message ?? err);
-      wrap.createDiv({ cls: "datashow-result__error", text: msg });
-    }
+      this.renderResultSet(content, view === "list", query.withoutId, result, projMisses);
+    };
+    btnResult.addEventListener("click", () => {
+      this.resultTab = "result";
+      renderPane();
+    });
+    btnDebug?.addEventListener("click", () => {
+      this.resultTab = "debug";
+      renderPane();
+    });
+    renderPane();
   }
 
   private renderResultSet(
@@ -306,8 +345,7 @@ export class DatashowPanelView extends ItemView {
     }
     entries.push({ op: "TIME", message: `${dbg.executionTimeMs} ms` });
 
-    const details = wrap.createEl("details", { cls: "datashow-debug" });
-    details.createEl("summary", { text: `调试信息（${entries.length}）` });
+    const details = wrap.createDiv({ cls: "datashow-debug" });
     const list = details.createEl("ul", { cls: "datashow-debug__list" });
     for (const entry of entries) {
       const li = list.createEl("li", {
