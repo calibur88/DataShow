@@ -49,11 +49,11 @@ DataShow 的**草稿开发工程**：新功能、DSQL 语法演进、测试与�
 
 ```bash
 npm install
-npm run dev     # watch 模式，产物同步到 ../data_show/test-vault/.obsidian/plugins/datashow-dev/
+npm run dev     # watch 模式，产物同步到本工程 test-vault/.obsidian/plugins/datashow-dev/
 npm run build   # 类型检查 + 生产构建
 npm test        # 单测三大类：功能示例 / 数学示例 / DSQL语言示例（+ store，query 层零 Obsidian 依赖）
 ```
 
-验收：两个工程的构建产物都部署到共享演示 vault `../data_show/test-vault/`（预置三大类看板：
+验收：构建产物部署到本工程专用的 `test-vault/`（预置三大类看板：
 功能示例 / 数学示例 / DSQL语言示例）。用 Obsidian 打开该 vault → 侧栏点开看板 →
 面板 DSQL 框粘贴 `test-vault/README.md` 里的示例 → 查询结果自动出现。

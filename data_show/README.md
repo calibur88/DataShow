@@ -72,8 +72,8 @@ src/
 docs/DSQL-EBNF.md  DSQL v1.3 语法规范
 ```
 
-构建时产物（main.js / manifest.json / styles.css）自动同步到 `test-vault/.obsidian/plugins/data-show/`；
-草稿工程（`../data_show_test`）的产物也部署到同一 vault，便于对照验收。
+构建时产物（main.js / manifest.json / styles.css）自动同步到 `test-vault/.obsidian/plugins/data-show/`
+（本工程专用的演示 vault；草稿工程的产物部署到它自己的 `../data_show_test/test-vault/`）。
 
 整体架构与双目录工作流见工作区根目录的 [../ARCHITECTURE.md](../ARCHITECTURE.md)。
 

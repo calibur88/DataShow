@@ -16,8 +16,8 @@ DataShow 是面向 Obsidian 的元数据看板插件：
 ## 2. 双目录工作流
 
 工作区刻意采用「正式 / 草稿」双工程结构，两个插件 id 不同（`data-show` / `datashow-dev`），
-构建产物部署到**同一个演示 vault**：`data_show/test-vault/`（预置看板按
-功能示例 / 数学示例 / DSQL语言示例 三大类组织，示例数据在 `示例/` 下），可在同一 vault 中共存、互相对照验收。
+各自配套独立的演示 vault（`data_show/test-vault/`、`data_show_test/test-vault/`，内容一致、
+只部署各自的插件），预置看板按 功能示例 / 数学示例 / DSQL语言示例 三大类组织，示例数据在 `示例/` 下。
 
 | 目录 | 定位 | 插件 id | 版本号 |
 |---|---|---|---|
@@ -28,7 +28,7 @@ DataShow 是面向 Obsidian 的元数据看板插件：
 
 1. 在 `data_show_test/` 开发，版本号末段递增（如 `1.6.001`）；
 2. `npm test`（单测按 功能示例 / 数学示例 / DSQL语言示例 三大类组织，共 47+ 用例）
-   与 `npm run build` 通过后，在共享演示 vault（`data_show/test-vault/`）中用 Obsidian 实际验收；
+   与 `npm run build` 通过后，在本工程的 `test-vault/` 中用 Obsidian 实际验收；
 3. 经用户明确允许后迁移到 `data_show/`，版本号定为 `x.y.0`，两目录的 src 保持同步
    （当前仅有 `main.ts` 头部注释、`types.ts`、`views/panel.ts` 的少量 id/文案差异）；
 4. 两边 CHANGELOG 分别记录：正式版从简、测试版详细。
@@ -83,14 +83,14 @@ main.ts ── 装配与注册
 ```bash
 cd data_show        # 或 data_show_test
 npm install
-npm run dev         # watch 模式，产物自动同步到 data_show/test-vault/.obsidian/plugins/<id>/
+npm run dev         # watch 模式，产物自动同步到本工程 test-vault/.obsidian/plugins/<id>/
 npm run build       # tsc 类型检查 + esbuild 生产构建
 npm test            # 仅 data_show_test：单测三大类（功能/数学/DSQL语言）+ store（零 Obsidian 依赖）
 ```
 
-验收方式：用 Obsidian 打开 `data_show/test-vault/`（两个插件都会部署进去），按其
+验收方式：用 Obsidian 打开对应工程的 `test-vault/`（各自只部署本工程插件），按其
 `test-vault/README.md` 的说明操作。构建产物（main.js / manifest.json / styles.css）由
-esbuild 配置自动同步进共享 vault，无需手工拷贝。
+esbuild 配置自动同步进各自 vault，无需手工拷贝。
 
 ## 5. 相关文档索引
 

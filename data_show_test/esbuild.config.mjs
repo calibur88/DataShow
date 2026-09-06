@@ -8,8 +8,6 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 
 const TEST_VAULT_PLUGIN_DIR = path.join(
   here,
-  "..",
-  "data_show",
   "test-vault",
   ".obsidian",
   "plugins",
