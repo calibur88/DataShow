@@ -25,7 +25,7 @@ DataShow 的**草稿开发工程**：新功能、DSQL 语法演进、测试与�
   内置函数 sqrt/cbrt/root/contains/length/lower/upper/empty（contains 区分大小写，
   忽略大小写用 contains(lower(字段), '值') 组合）；
   多级排序 + `**SORT** 字段 **BY** ('值1','值2')` 自定义优先级；UTF-8 字节序确定性排序；
-  调试信息（各操作行数/字段缺失/耗时，设置开关默认开）；语法错误带行列号；
+  调试信息（各操作行数/字段缺失/耗时，1.7.002 起默认关，与查询结果分标签页显示、限高独立滚动）；语法错误带行列号；
   非致命语义（类型不匹配/除零/缺字段 → null）。**不兼容 v1.1 旧写法**（用户决策）。
 - ✅ **索引层**：metadataCache 全量首扫 + 增量监听（debounce），
   frontmatter 原样入行（Breadcrumbs 等关系字段不改写）。

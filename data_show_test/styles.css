@@ -242,6 +242,31 @@
   cursor: pointer;
 }
 
+/* ===== 结果区标签页（查询结果 / 调试信息） ===== */
+.datashow-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.datashow-tabs__tab {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 4px 10px;
+  cursor: pointer;
+  color: var(--text-muted);
+  border-bottom: 2px solid transparent;
+  font-size: 13px;
+}
+
+.datashow-tabs__tab.is-active {
+  color: var(--text-normal);
+  border-bottom-color: var(--interactive-accent);
+  font-weight: 600;
+}
+
 /* ===== DSQL 调试信息 ===== */
 .datashow-debug {
   margin-top: 8px;
@@ -259,6 +284,8 @@
   padding-left: 8px;
   list-style: none;
   font-family: var(--font-monospace);
+  max-height: 45vh;
+  overflow-y: auto;
 }
 
 .datashow-debug__item {
