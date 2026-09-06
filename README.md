@@ -4,7 +4,7 @@
 
 | 目录 | 定位 | 插件 id |
 |---|---|---|
-| [`data_show/`](data_show/) | **正式版**（当前 1.7.0）：清理后的插件工程，只含源码、构建配置与用户文档 | `data-show` |
+| [`data_show/`](data_show/) | **正式版**（当前 1.8.0）：清理后的插件工程，只含源码、构建配置与用户文档 | `data-show` |
 | [`data_show_test/`](data_show_test/) | **草稿开发目录**：新功能、DSQL 语法演进、测试与规范文档都在这里进行 | `datashow-dev` |
 
 两者 id 不同，可在同一 vault 中共存。**版本规则**：
@@ -24,14 +24,14 @@
 **其他文档**：
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) —— 整体架构、双目录工作流与开发/测试说明（先读这份）；
-- [`data_show/docs/DSQL-EBNF.md`](data_show/docs/DSQL-EBNF.md) —— DSQL v1.3 权威语法规范；
+- [`data_show/docs/DSQL-EBNF.md`](data_show/docs/DSQL-EBNF.md) —— DSQL v1.4 权威语法规范（含 TOTAL 聚合与 $变量$ 派生体系）；
 - [`.zcode/plans/history.md`](.zcode/plans/history.md) —— AI 会话计划归档（均已随 1.6.0/1.7.0 落地）。
 
 ## 正式版核心
 
 - **看板**：`名称 + 类型 + 说明 + DSQL`，在设置中管理、在看板面板中编辑（自动保存）；
 - **数据可编辑**：表格双击单元格、列表点击条目直接改 frontmatter，保存后结果自动刷新；
-- **DSQL v1.3**（v1.4 聚合扩展正在 `data_show_test/` 测试）：标记语法（`**SELECT**` / `%==%`），子句按前件关系书写（SELECT 可省略），
+- **DSQL v1.4**：标记语法（`**SELECT**` / `%==%`），子句按前件关系书写（SELECT 可省略），
   完整表达式、多级排序与自定义优先级，规范见 [`data_show/docs/DSQL-EBNF.md`](data_show/docs/DSQL-EBNF.md)；
 - **索引**：Obsidian metadataCache 增量索引，frontmatter 原样入行（不解释、不改写业务字段）；
 - **视图**：表格 / 列表（看板卡片墙、日历、统计为规划项）。

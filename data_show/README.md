@@ -7,7 +7,7 @@
 - **Markdown First**：数据只存于笔记本身，插件不建私有数据库；
 - **确定性排序**：UTF-8 字节序，跨平台结果一致。
 
-**当前版本**：`1.7.0`（正式版末段为 `0`；新功能先在 `../data_show_test` 以
+**当前版本**：`1.8.0`（正式版末段为 `0`；新功能先在 `../data_show_test` 以
 `x.y.001+` 测试版本开发，测试通过并经允许后迁移至此并定为 `x.y.0`）。
 
 ## 安装
@@ -42,6 +42,8 @@
 - 函数：`**sqrt** **cbrt** **root** **contains** **length** **lower** **upper** **empty**`
   （`**contains**` 区分大小写，忽略大小写用 `**contains**(**lower**(字段), '值')`）；
 - 排序：多级排序、`**SORT** 字段 **BY** ('值1', '值2')` 自定义优先级；
+- **聚合与派生变量（DSQL 1.4）**：`**TOTAL** 字段 **AS** $总成绩$` 全表聚合（恒忽略 WHERE）；
+  `$变量$` 在 SELECT 中引用（链式派生），派生列只读；仅含 TOTAL 项时输出单行汇总；
 - 调试：「查询结果 / 调试信息」标签页显示各操作行数、字段缺失、非致命警告与耗时，列表限高独立滚动（默认关闭，设置可开）。
 
 ## 构建
@@ -69,7 +71,7 @@ src/
   index/           数据层：扫描器 / 行构造 / 行仓库
   query/           DSQL 语言层：词法 / 语法 / 执行（零 Obsidian 依赖）
   views/           表现层：看板侧栏 / 看板面板 / 属性编辑弹窗
-docs/DSQL-EBNF.md  DSQL v1.3 语法规范
+docs/DSQL-EBNF.md  DSQL v1.4 语法规范
 ```
 
 构建时产物（main.js / manifest.json / styles.css）自动同步到 `test-vault/.obsidian/plugins/data-show/`

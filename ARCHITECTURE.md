@@ -1,7 +1,7 @@
 # DataShow 整体架构
 
 > 本文是工作区的权威架构说明，先读这份再看各目录内的专题文档。
-> 当前版本：插件 **1.7.0** · 语言 **DSQL 1.3**（v1.4 聚合扩展在草稿目录测试中；2026-09 核对）。
+> 当前版本：插件 **1.8.0** · 语言 **DSQL 1.4**（2026-09 核对）。
 
 ## 1. 项目定位
 
@@ -22,7 +22,7 @@ DataShow 是面向 Obsidian 的元数据看板插件：
 | 目录 | 定位 | 插件 id | 版本号 |
 |---|---|---|---|
 | `data_show/` | 正式版：清理后的插件工程，只含源码、构建配置与用户文档 | `data-show` | `x.y.0` |
-| `data_show_test/` | 草稿开发目录：新功能、DSQL 语法演进、测试与规范文档 | `datashow-dev` | `x.y.001+`（当前与正式版同步于 1.7.0） |
+| `data_show_test/` | 草稿开发目录：新功能、DSQL 语法演进、测试与规范文档 | `datashow-dev` | `x.y.001+`（当前与正式版同步于 1.8.0） |
 
 **开发循环**（版本规则见根 [README.md](README.md)）：
 
@@ -97,14 +97,14 @@ esbuild 配置自动同步进各自 vault，无需手工拷贝。
 | 文档 | 位置 | 说明 |
 |---|---|---|
 | 工作区总说明 | [README.md](README.md) | 双目录结构、版本规则、快速开始 |
-| API 参考 | [API.md](API.md) | Obsidian 官方 API + 插件 API（基于 1.7.0，minAppVersion 1.4.4） |
-| DSQL 规范 | [`data_show/docs/DSQL-EBNF.md`](data_show/docs/DSQL-EBNF.md) | DSQL v1.3 权威语法规范（EBNF + 语义） |
+| API 参考 | [API.md](API.md) | Obsidian 官方 API + 插件 API（基于 1.8.0，minAppVersion 1.4.4） |
+| DSQL 规范 | [`data_show/docs/DSQL-EBNF.md`](data_show/docs/DSQL-EBNF.md) | DSQL v1.4 权威语法规范（EBNF + 语义） |
 | 正式版日志 | [`data_show/CHANGELOG.md`](data_show/CHANGELOG.md) | 从简 |
 | 测试版日志 | [`data_show_test/CHANGELOG.md`](data_show_test/CHANGELOG.md) | 详细 |
 | 计划归档 | [`.zcode/plans/history.md`](.zcode/plans/history.md) | 已落地的会话计划 |
 
 ## 6. 现状与规划
 
-**已实现**（1.7.0 / DSQL 1.3）：DSQL 查询（表达式/函数/多级排序/自定义优先级/调试信息）、表格与列表视图、属性内联编辑、索引增量更新、双目录迁移流。
+**已实现**（1.8.0 / DSQL 1.4）：DSQL 查询（表达式/函数/多级排序/自定义优先级/调试信息）、TOTAL 全表聚合与 $变量$ 派生体系、表格与列表视图、属性内联编辑、索引增量更新、双目录迁移流。
 
 **规划中**：统一记录在工作区根目录 [`TODO`](TODO)（当前留空）。

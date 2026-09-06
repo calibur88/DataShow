@@ -11,7 +11,8 @@ export type Expr =
   | FieldExpr
   | CallExpr
   | UnaryExpr
-  | BinaryExpr;
+  | BinaryExpr
+  | VariableExpr;
 
 export interface LitExpr {
   kind: "lit";
@@ -43,6 +44,13 @@ export interface BinaryExpr {
   right: Expr;
 }
 
+/** DSQL 1.4：$变量$ 引用（变量命名空间；value 为裸名） */
+export interface VariableExpr {
+  kind: "variable";
+  /** 裸名（书写时 $平均分$ → name "平均分"） */
+  name: string;
+}
+
 /* ---------- 数据源 ---------- */
 
 export type Source = FolderSource | TagSource | OpSource;
@@ -69,6 +77,8 @@ export interface OpSource {
 export interface ColumnSel {
   expr: Expr;
   alias: string | null;
+  /** DSQL 1.4：**TOTAL** 全表聚合项（alias 强制，值进入变量表） */
+  total?: true;
 }
 
 export interface SortKey {

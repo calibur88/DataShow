@@ -257,6 +257,13 @@ export class DatashowPanelView extends ItemView {
     }
 
     if (asList) {
+      const derived = result.columns.filter(
+        (c) =>
+          c.total ||
+          c.expr.kind === "variable" ||
+          (c.expr.kind === "field" &&
+            (c.expr.path.startsWith("file.") || c.expr.path.startsWith("this."))),
+      );
       const list = wrap.createEl("ul", { cls: "datashow-result__list" });
       for (const row of result.rows) {
         const li = list.createEl("li");
@@ -264,6 +271,17 @@ export class DatashowPanelView extends ItemView {
         li.title = "点击编辑笔记属性";
         li.addEventListener("click", () => this.openFrontmatter(row));
         this.makeFileLink(li, row);
+        // DSQL 1.4：派生变量/表达式列以只读辅助行展示
+        if (derived.length > 0) {
+          const vars = result.globals ? new Map(result.globals) : undefined;
+          for (const col of derived) {
+            const value = evaluateExpr(col.expr, row, null, undefined, undefined, vars);
+            if (col.alias && vars) vars.set(col.alias, value);
+            const sub = li.createDiv({ cls: "datashow-result__derived" });
+            sub.createSpan({ cls: "datashow-result__derived-name", text: col.alias ?? "" });
+            sub.createSpan({ text: formatCell(value, this.plugin.settings.decimalPlaces) });
+          }
+        }
       }
       wrap.createDiv({ cls: "datashow-result__count", text: `${result.rows.length} 项` });
       return;
@@ -296,13 +314,19 @@ export class DatashowPanelView extends ItemView {
           this.openFrontmatter(row);
         });
       }
+      // DSQL 1.4：每行独立变量环境（全局 TOTAL + 本行已计算的派生变量，链式派生）
+      const vars = result.globals ? new Map(result.globals) : undefined;
       for (const col of result.columns) {
         const td = tr.createEl("td");
-        const value = evaluateExpr(col.expr, row, null, track);
+        // TOTAL 列直接取全局变量表（col.expr 是聚合操作数，不能按行求值）
+        const value = col.total
+          ? vars?.get(col.alias) ?? null
+          : evaluateExpr(col.expr, row, null, track, undefined, vars);
+        if (col.alias && vars) vars.set(col.alias, value);
         td.setText(formatCell(value, this.plugin.settings.decimalPlaces));
-        // 仅直接 frontmatter 字段可双击内联编辑（file.*/this.*/表达式/数组不可）
+        // 仅直接 frontmatter 字段可双击内联编辑（TOTAL/file.*/this.*/表达式/$变量$/数组不可）
         const path = col.expr.kind === "field" ? col.expr.path : null;
-        if (path && !path.startsWith("file.") && !path.startsWith("this.") && !Array.isArray(value)) {
+        if (path && !col.total && !path.startsWith("file.") && !path.startsWith("this.") && !Array.isArray(value)) {
           td.addClass("datashow-cell--editable");
           td.title = "双击编辑，回车保存（Esc 取消）";
           td.addEventListener("dblclick", () => this.beginCellEdit(td, row, path, value));
@@ -327,6 +351,9 @@ export class DatashowPanelView extends ItemView {
     if (dbg.where) entries.push({ op: "WHERE", message: dbg.where });
     if (dbg.sort) entries.push({ op: "SORT", message: dbg.sort });
     if (dbg.limit) entries.push({ op: "LIMIT", message: dbg.limit });
+    for (const agg of dbg.aggregates ?? []) {
+      entries.push({ op: "AGG", message: agg });
+    }
     const allMisses = new Map(dbg.fieldMisses.map((m) => [m.field, { ...m }]));
     for (const m of projMisses?.values() ?? []) {
       const rec = allMisses.get(m.field);

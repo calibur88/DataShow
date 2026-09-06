@@ -11,6 +11,7 @@
 
 export type TokenType =
   | "marked"   // **WORD**（关键词或函数名）
+  | "variable" // $变量$（DSQL 1.4 派生变量引用，value 为裸名）
   | "ident"    // 字段名（可含点）
   | "string"   // '字符串'
   | "path"     // "路径"
@@ -40,6 +41,9 @@ export const KEYWORDS = new Set([
   "SELECT", "FROM", "WHERE", "SORT", "BY", "AND", "OR", "NOT", "AS",
   "LIMIT", "ASC", "DESC", "TABLE", "LIST", "WITHOUT", "ID",
 ]);
+
+/** DSQL 1.4：聚合关键词（仅 SELECT 项合法，parser 单独拦截，不入 KEYWORDS 以免其他子句误吞） */
+export const AGG_KEYWORDS = new Set(["TOTAL"]);
 
 export const FUNCTIONS = new Set([
   "sqrt", "cbrt", "root", "contains", "length", "lower", "upper", "empty",
@@ -83,6 +87,10 @@ export class Lexer {
     if (ch === "%") return this.readOp(line, col);
     if (ch === "*") return this.readStar(line, col);
     if (DIGIT.test(ch)) return this.readNumber(line, col);
+    if (ch === "$") {
+      const variable = this.tryReadVariable(line, col);
+      if (variable) return variable;
+    }
     if (IDENT_START.test(ch)) return this.readIdent(line, col);
     return this.readPunct(line, col);
   }
@@ -179,6 +187,9 @@ export class Lexer {
     }
     const upper = word.toUpperCase();
     const lower = word.toLowerCase();
+    if (AGG_KEYWORDS.has(upper)) {
+      return { type: "marked", value: upper, line, col };
+    }
     if (KEYWORDS.has(upper)) {
       return { type: "marked", value: upper, line, col };
     }
@@ -220,6 +231,22 @@ export class Lexer {
       break;
     }
     return { type: "ident", value, line, col };
+  }
+
+  /** $变量$（DSQL 1.4）：读到闭合 $ 产出 variable token（裸名）；否则返回 null 回退 ident */
+  private tryReadVariable(line: number, col: number): Token | null {
+    const start = this.pos + 1;
+    let i = start;
+    while (i < this.src.length && this.src[i] !== "$" && this.src[i] !== "\n") {
+      i++;
+    }
+    if (i >= start && this.src[i] === "$") {
+      const name = this.src.slice(start, i);
+      this.pos = i + 1;
+      this.col += i + 1 - start + 1;
+      return { type: "variable", value: name, line, col };
+    }
+    return null;
   }
 
   private readPunct(line: number, col: number): Token {
