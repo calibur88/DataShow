@@ -92,12 +92,12 @@ export default class DatashowPlugin extends Plugin {
 
     const existing = workspace.getLeavesOfType(SIDEBAR_VIEW_TYPE)[0];
     if (existing) {
-      workspace.revealLeaf(existing);
+      await workspace.revealLeaf(existing);
       return;
     }
-    const leaf = workspace.getLeftLeaf(false) ?? workspace.getLeaf(true);
+    const leaf = workspace.getLeftLeaf(false) ?? workspace.getLeaf('tab');
     await leaf.setViewState({ type: SIDEBAR_VIEW_TYPE, active: true });
-    workspace.revealLeaf(leaf);
+    await workspace.revealLeaf(leaf);
   }
 
   /** 在主工作区打开看板面板（新标签页或复用已有面板标签）。 */
@@ -109,13 +109,13 @@ export default class DatashowPlugin extends Plugin {
       const existing = workspace.getLeavesOfType(PANEL_VIEW_TYPE)[0];
       if (existing) {
         await existing.setViewState({ type: PANEL_VIEW_TYPE, active: true, state });
-        workspace.revealLeaf(existing);
+        await workspace.revealLeaf(existing);
         return;
       }
     }
 
     const leaf: WorkspaceLeaf = workspace.getLeaf(this.settings.openInNewTab ? "tab" : false);
     await leaf.setViewState({ type: PANEL_VIEW_TYPE, active: true, state });
-    workspace.revealLeaf(leaf);
+    await workspace.revealLeaf(leaf);
   }
 }

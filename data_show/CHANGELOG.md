@@ -1,6 +1,18 @@
 # DataShow 更新日志
 
-## 1.6.0（当前）
+## 1.7.0（当前）
+
+- **最低版本要求提升为 Obsidian 1.4.4**：属性编辑依赖的 `fileManager.processFrontMatter`
+  官方标注 @since 1.4.4，原 1.4.0 声明在 1.4.0–1.4.3 上会运行报错；
+- 稳定性修缮（自测试版 1.6.001 迁移）：
+  - `workspace.revealLeaf` 全部改为 `await`（该 API 自 1.7.2 返回 Promise，
+    确保视图完全加载、避免 deferred leaf 未就绪）；
+  - `metadataCache.on("resolved")` 改为仅首次全量重建，之后走增量路径
+    （该事件在启动后每次批量修改解析完成都会触发，原先每次都全量扫描）；
+- 写法现代化：`vault.getAbstractFileByPath` → `getFileByPath`、
+  `workspace.getLeaf(true)` → `getLeaf('tab')`（均为官方推荐形式）。
+
+## 1.6.0
 
 - frontmatter 属性编辑：表格视图双击单元格直接改属性（回车保存，自动转型）；
   列表视图点击条目或行内 ✎ 打开 YAML 属性编辑弹窗（官方 processFrontMatter 写回）；

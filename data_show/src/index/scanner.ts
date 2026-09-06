@@ -10,10 +10,16 @@ export class VaultScanner {
   private pending = new Set<string>();
   private flushDebounced = debounce(() => this.flush(), 300, true);
 
-  /** Obsidian 在启动完成、链接全部解析后触发一次 */
+  /**
+   * resolved 事件：启动后及此后每次批量修改解析完成都会触发。
+   * 仅首次触发做全量重建，之后交给增量路径（changed 的 flush 已重算反向链接）。
+   */
   private onResolved = (): void => {
+    if (this.resolvedOnce) return;
+    this.resolvedOnce = true;
     this.fullRebuild();
   };
+  private resolvedOnce = false;
 
   private onCacheChanged = (file: TFile): void => {
     if (file.extension !== "md") return;

@@ -1,7 +1,7 @@
 {
   "id": "datashow-dev",
   "name": "DataShow Dev",
-  "version": "1.6.001",
+  "version": "1.7.0",
   "minAppVersion": "1.4.4",
   "description": "Development build of DataShow. Do not redistribute.",
   "author": "calibur88",

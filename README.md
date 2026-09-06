@@ -4,7 +4,7 @@
 
 | 目录 | 定位 | 插件 id |
 |---|---|---|
-| [`data_show/`](data_show/) | **正式版**（当前 1.6.0）：清理后的插件工程，只含源码、构建配置与用户文档 | `data-show` |
+| [`data_show/`](data_show/) | **正式版**（当前 1.7.0）：清理后的插件工程，只含源码、构建配置与用户文档 | `data-show` |
 | [`data_show_test/`](data_show_test/) | **草稿开发目录**：新功能、DSQL 语法演进、测试、规范与方案文档都在这里进行 | `datashow-dev` |
 
 两者 id 不同，可在同一 vault 中共存。**版本规则**：
@@ -26,7 +26,7 @@
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) —— 整体架构、双目录工作流与开发/测试说明（先读这份）；
 - [`data_show/docs/DSQL-EBNF.md`](data_show/docs/DSQL-EBNF.md) —— DSQL v1.3 权威语法规范；
 - [`data_show_test/docs/datashow方案.md`](data_show_test/docs/datashow方案.md) —— 早期方案设计（历史文档）；
-- [`.zcode/plans/history.md`](.zcode/plans/history.md) —— AI 会话计划归档（均已随 1.6.0 落地）。
+- [`.zcode/plans/history.md`](.zcode/plans/history.md) —— AI 会话计划归档（均已随 1.6.0/1.7.0 落地）。
 
 ## 正式版核心
 

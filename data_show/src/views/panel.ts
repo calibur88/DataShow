@@ -329,7 +329,7 @@ export class DatashowPanelView extends ItemView {
 
   /** 打开笔记的 frontmatter 编辑弹窗。 */
   private openFrontmatter(row: DataRow): void {
-    const f = this.app.vault.getAbstractFileByPath(row.path);
+    const f = this.app.vault.getFileByPath(row.path);
     if (f instanceof TFile && f.extension === "md") {
       new FrontmatterEditModal(this.app, f, () => this.renderResult()).open();
     }
@@ -355,7 +355,7 @@ export class DatashowPanelView extends ItemView {
       if (e.key === "Enter") {
         e.preventDefault();
         const value = parseCellInput(input.value);
-        const f = this.app.vault.getAbstractFileByPath(row.path);
+        const f = this.app.vault.getFileByPath(row.path);
         if (!(f instanceof TFile)) return cancel();
         void this.app.fileManager.processFrontMatter(f, (fm) => {
           fm[path] = value;
