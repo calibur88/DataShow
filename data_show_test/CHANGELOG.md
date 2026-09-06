@@ -3,8 +3,19 @@
 测试版（`data_show_test/`，插件 id `datashow-dev`）的开发日志：记录功能演进、
 语法变更与测试情况，比正式版详细。迁移到正式版的功能见 `../data_show/CHANGELOG.md`。
 
-> **当前状态**（2026-09）：本目录与正式版同步于 **1.6.0**，所有已完成条目均已随 1.6.0
-> 迁移至 `../data_show/`。下一轮改进从 **1.6.001** 开始。
+> **当前状态**（2026-09）：本目录当前测试版 **1.6.001**（基于 1.6.0，待验收后迁移至正式版）。
+
+## 1.6.001（API 修缮，待验收迁移）
+
+- **minAppVersion 1.4.0 → 1.4.4**：属性编辑依赖的 `fileManager.processFrontMatter`
+  官方标注 @since 1.4.4，原声明在 1.4.0–1.4.3 上会运行报错；
+- **`workspace.revealLeaf` 全部改为 `await`**：该 API 自 1.7.2 返回 Promise，
+  官方要求 await 以确保视图完全加载（避免 deferred leaf 未就绪）；
+- **`metadataCache.on("resolved")` 仅首次全量重建**：该事件在启动后每次批量修改
+  解析完成都会再触发，原先每次都全量扫描；之后统一走增量路径（flush 已重算反向链接）；
+- **现代化写法统一**：`vault.getAbstractFileByPath` → `getFileByPath`（带类型返回值）、
+  `workspace.getLeaf(true)` → `getLeaf('tab')`（字符串形式为推荐写法）；
+- 已知不修：`processFrontMatter` 保存会规范化重写整个 YAML（官方行为，属性弹窗文案提示即可）。
 
 ## 工程重构（未升版本，随 1.6.0）
 
