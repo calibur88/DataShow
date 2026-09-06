@@ -17,7 +17,7 @@ DataShow 的**草稿开发工程**：新功能、DSQL 语法演进、测试与�
 - ✅ **主区面板**：头部（名称 + 类型徽标 + 说明）→ DSQL 编辑器 → 工具条（刷新 + 视图类型）→ 查询结果。
 - ✅ **视图类型**：表格 / 列表 实装（默认跟随 DSQL 的 TABLE/LIST 关键字，可下拉覆盖）；
   看板卡片墙 / 卡片 / 日历 / 统计汇总 = 规划中（下拉灰显）。
-- ✅ **DSQL v1.3**（规范：`docs/DSQL-EBNF.md`；`npm test` 41 例覆盖）：
+- ✅ **DSQL v1.3**（规范：`docs/DSQL-EBNF.md`；`npm test` 47 例覆盖，按 功能/数学/DSQL语言 三大类组织）：
   **标记语法字面化**——关键词 `**SELECT**`、运算符 `%==%`、字符串 `'值'`、路径 `"文件夹"`；
   子句按**前件关系**解析（书写顺序自由、每条至多一次；WHERE/SORT/LIMIT 以 FROM 为前件；
   SELECT 可省略默认 `*`，FROM 为唯一必填子句；视图 TABLE/LIST 缺省 TABLE）；
@@ -49,10 +49,11 @@ DataShow 的**草稿开发工程**：新功能、DSQL 语法演进、测试与�
 
 ```bash
 npm install
-npm run dev     # watch 模式，产物同步到 test-vault/.obsidian/plugins/datashow-dev/
+npm run dev     # watch 模式，产物同步到 ../data_show/test-vault/.obsidian/plugins/datashow-dev/
 npm run build   # 类型检查 + 生产构建
-npm test        # DSQL 方言单元测试（query 层零 Obsidian 依赖）
+npm test        # 单测三大类：功能示例 / 数学示例 / DSQL语言示例（+ store，query 层零 Obsidian 依赖）
 ```
 
-验收：用 Obsidian 打开 `test-vault`，启用 DataShow Dev → 设置里新建/编辑看板（名称/类型/说明）→
-侧栏点开看板 → 面板 DSQL 框粘贴 `test-vault/README.md` 里的示例 → 查询结果自动出现。
+验收：两个工程的构建产物都部署到共享演示 vault `../data_show/test-vault/`（预置三大类看板：
+功能示例 / 数学示例 / DSQL语言示例）。用 Obsidian 打开该 vault → 侧栏点开看板 →
+面板 DSQL 框粘贴 `test-vault/README.md` 里的示例 → 查询结果自动出现。

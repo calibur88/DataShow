@@ -15,7 +15,9 @@ DataShow 是面向 Obsidian 的元数据看板插件：
 
 ## 2. 双目录工作流
 
-工作区刻意采用「正式 / 草稿」双工程结构，两个插件 id 不同（`data-show` / `datashow-dev`），可在同一 vault 中共存、互相对照验收：
+工作区刻意采用「正式 / 草稿」双工程结构，两个插件 id 不同（`data-show` / `datashow-dev`），
+构建产物部署到**同一个演示 vault**：`data_show/test-vault/`（预置看板按
+功能示例 / 数学示例 / DSQL语言示例 三大类组织，示例数据在 `示例/` 下），可在同一 vault 中共存、互相对照验收。
 
 | 目录 | 定位 | 插件 id | 版本号 |
 |---|---|---|---|
@@ -25,12 +27,15 @@ DataShow 是面向 Obsidian 的元数据看板插件：
 **开发循环**（版本规则见根 [README.md](README.md)）：
 
 1. 在 `data_show_test/` 开发，版本号末段递增（如 `1.6.001`）；
-2. `npm test`（41+ 用例）与 `npm run build` 通过后，在 `test-vault/` 中用 Obsidian 实际验收；
+2. `npm test`（单测按 功能示例 / 数学示例 / DSQL语言示例 三大类组织，共 47+ 用例）
+   与 `npm run build` 通过后，在共享演示 vault（`data_show/test-vault/`）中用 Obsidian 实际验收；
 3. 经用户明确允许后迁移到 `data_show/`，版本号定为 `x.y.0`，两目录的 src 保持同步
    （当前仅有 `main.ts` 头部注释、`types.ts`、`views/panel.ts` 的少量 id/文案差异）；
 4. 两边 CHANGELOG 分别记录：正式版从简、测试版详细。
 
-测试基础设施（`scripts/test.mjs`、`tests/`）目前只在 `data_show_test/`，正式目录迁移时不包含。
+测试基础设施（`scripts/test.mjs`、`tests/`）只在 `data_show_test/`，正式目录迁移时不包含；
+测试用例按示例面板三大类组织：`feature.test.ts`（功能示例）、`math.test.ts`（数学示例）、
+`dsql-language.test.ts`（DSQL语言示例），另有 `store.test.ts`（索引层）与 `helpers.ts`（共享数据）。
 
 ## 3. 代码架构（src/）
 
@@ -78,12 +83,14 @@ main.ts ── 装配与注册
 ```bash
 cd data_show        # 或 data_show_test
 npm install
-npm run dev         # watch 模式，产物自动同步到 test-vault/.obsidian/plugins/<id>/
+npm run dev         # watch 模式，产物自动同步到 data_show/test-vault/.obsidian/plugins/<id>/
 npm run build       # tsc 类型检查 + esbuild 生产构建
-npm test            # 仅 data_show_test：DSQL query 层单元测试（零 Obsidian 依赖，Node 原生脚本）
+npm test            # 仅 data_show_test：单测三大类（功能/数学/DSQL语言）+ store（零 Obsidian 依赖）
 ```
 
-验收方式：用 Obsidian 打开 `test-vault/`，启用对应插件，按其 `test-vault/README.md` 的验证清单操作。构建产物（main.js / manifest.json / styles.css）由 esbuild 配置自动同步进 test-vault，无需手工拷贝。
+验收方式：用 Obsidian 打开 `data_show/test-vault/`（两个插件都会部署进去），按其
+`test-vault/README.md` 的说明操作。构建产物（main.js / manifest.json / styles.css）由
+esbuild 配置自动同步进共享 vault，无需手工拷贝。
 
 ## 5. 相关文档索引
 

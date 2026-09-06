@@ -6,6 +6,15 @@
 > **当前状态**（2026-09）：本目录与正式版同步于 **1.6.0**，所有已完成条目均已随 1.6.0
 > 迁移至 `../data_show/`。下一轮改进从 **1.6.001** 开始。
 
+## 工程重构（未升版本，随 1.6.0）
+
+- **测试按示例三大类重组**：`tests/sql.test.ts` 拆分为 `feature.test.ts`（功能示例 22 例）、
+  `math.test.ts`（数学示例 9 例）、`dsql-language.test.ts`（DSQL语言示例 12 例），
+  共享数据提取到 `helpers.ts`；连同 `store.test.ts` 共 47 例全部通过。
+- **演示 vault 统一**：删除本目录 `test-vault/`，构建产物改为同步到
+  `../data_show/test-vault/.obsidian/plugins/datashow-dev/`（esbuild 配置同步更新）；
+  正式目录 test-vault 清空重建，示例数据与预置看板按 功能示例 / 数学示例 / DSQL语言示例 三大类组织。
+
 ## 1.4.001（插件测试版，已随 1.6.0 迁移至正式版）
 
 - **frontmatter 属性编辑**（看板数据直接改，保存后索引增量更新、查询结果自动刷新）：

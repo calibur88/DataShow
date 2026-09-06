@@ -61,7 +61,7 @@ versions.json      历史版本记录
 main.js            构建产物
 styles.css         样式
 CHANGELOG.md       更新日志（从简，只写功能更新）
-test-vault/        效果验收 vault（含多项目测试数据与预置看板，用 Obsidian 打开启用本插件即可）
+test-vault/        演示与验收 vault（预置三大类看板：功能/数学/DSQL语言；两个工程的构建产物都部署到这里）
 src/
   main.ts          入口：装配各层、注册视图
   types.ts         公共类型
@@ -72,7 +72,8 @@ src/
 docs/DSQL-EBNF.md  DSQL v1.3 语法规范
 ```
 
-构建时产物（main.js / manifest.json / styles.css）自动同步到 `test-vault/.obsidian/plugins/data-show/`。
+构建时产物（main.js / manifest.json / styles.css）自动同步到 `test-vault/.obsidian/plugins/data-show/`；
+草稿工程（`../data_show_test`）的产物也部署到同一 vault，便于对照验收。
 
 整体架构与双目录工作流见工作区根目录的 [../ARCHITECTURE.md](../ARCHITECTURE.md)。
 
