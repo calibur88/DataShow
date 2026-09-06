@@ -46,3 +46,8 @@ npm run build       # 产出 main.js
 ```
 
 安装：把 `main.js`、`manifest.json`、`styles.css` 放入 `仓库/.obsidian/plugins/data-show/` 并启用。
+
+## License
+
+**作者**：calibur88。许可：MIT 附加商业使用限制——非商业用途自由使用；商业用途须事先获得作者授权
+（QQ：`jiuxin303@qq.com` / Email：`chy36126@gmail.com`），全文见 [LICENSE](LICENSE)。

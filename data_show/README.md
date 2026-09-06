@@ -78,4 +78,6 @@ docs/DSQL-EBNF.md  DSQL v1.3 语法规范
 
 ## License
 
-MIT
+MIT 附加商业使用限制：非商业用途可自由使用、修改、分发；**商业用途须事先获得作者授权**
+（联系：QQ `jiuxin303@qq.com` / Email `chy36126@gmail.com`）。全文见根目录
+[LICENSE](../LICENSE)。作者：**calibur88**。
