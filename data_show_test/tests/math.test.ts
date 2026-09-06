@@ -198,4 +198,65 @@ test("TOTAL 调试信息：AGG 消息与非数值跳过警告", () => {
   assert.ok(r.debug!.warnings.some((w) => /跳过 .* 个非数值/.test(w)));
 });
 
+/* ---------- 字符串连接 %||% 补充 ---------- */
+
+test("连接的 null 传播：任一侧 null → null", () => {
+  const evalOne = evalOn({ 名: "甲" });
+  assert.equal(evalOne(`'a' %||% null`), null);
+  assert.equal(evalOne(`null %||% 'b'`), null);
+  assert.equal(evalOne(`名 %||% null %||% '后缀'`), null); // 链中任意一环 null 整体为 null
+});
+
+test("连接的非字符串操作数自动转字符串（数字/布尔）", () => {
+  const evalOne = evalOn({ 名: "甲", 分: 95, 过: true });
+  assert.equal(evalOne(`1 %||% 2`), "12");
+  assert.equal(evalOne(`分 %||% '分'`), "95分");
+  assert.equal(evalOne(`过 %||% '-' %||% 名`), "true-甲");
+});
+
+test("连接与算术混排：%+% 优先于 %||%", () => {
+  const evalOne = evalOn({ 名: "v" });
+  assert.equal(evalOne(`1 %+% 1 %||% '分'`), "2分");      // 先算 1+1
+  assert.equal(evalOne(`名 %||% 1 %+% 1`), "v2");          // 右侧先算 1+1
+  assert.equal(evalOne(`(名 %||% 1) %+% 1`), null);        // 括号改变：'v1' %+% 1 类型不匹配 → null
+});
+
+test("连接结果参与函数与比较", () => {
+  const evalOne = evalOn({ 名: "AbC" });
+  assert.equal(evalOne(`**contains**(**lower**(名 %||% 'd'), 'bcd')`), true);
+  assert.equal(evalOne(`名 %||% 'D' %==% 'AbCD'`), true);  // == 按字节精确
+});
+
+/* ---------- 复合表达式（多表达式组合） ---------- */
+
+test("算术优先级与括号：乘加、括号改变、左结合、乘方右结合", () => {
+  const evalOne = evalOn({ a: 2, b: 3 });
+  assert.equal(evalOne(`2 %+% 3 %*% 4`), 14);              // * 先于 +
+  assert.equal(evalOne(`(2 %+% 3) %*% 4`), 20);
+  assert.equal(evalOne(`10 %-% 2 %-% 3`), 5);              // 减法左结合
+  assert.equal(evalOne(`2 %*% b %^% 2`), 18);              // ^ 右结合且高于 *
+  assert.equal(evalOne(`(a %+% b) %*% (b %-% a)`), 5);     // 复合括号
+});
+
+test("复合逻辑：比较 + AND/OR/NOT + 算术混合（AND 优先于 OR）", () => {
+  const evalOne = evalOn({ a: 5, b: 1 });
+  assert.equal(evalOne(`a %>% 1 **AND** b %<% 2`), true);
+  assert.equal(evalOne(`**NOT** (a %>% 1 **AND** b %>% 2) **OR** a %==% 5`), true); // NOT 组内为假 → OR 右侧真
+  assert.equal(evalOne(`a %-% 3 %>% 1 **OR** b %*% 2 %==% 2 **AND** a %<% b`), true); // (a-3>1) 或 ((b*2==2) AND (a<b))=false → true
+  assert.equal(evalOne(`a %>% 1 **AND** **NOT** b %>% 0`), false);
+});
+
+test("复合表达式：函数嵌套比较与字符串运算组合", () => {
+  const evalOne = evalOn({ 名: "AbC", 分: 95 });
+  assert.equal(
+    evalOne(`**length**(名) %*% 2 %+% 1 %>=% 7 **AND** **upper**(名 %||% 'd') %==% 'ABCD'`), true,
+  );
+});
+
+test("sqrt(0) 与除零链式求值", () => {
+  const evalOne = evalOn({ 分: 95 });
+  assert.equal(evalOne(`**sqrt**(分 %-% 95)`), 0);
+  assert.equal(evalOne(`分 %/% (分 %-% 95)`), null); // 除零 → null（非致命）
+});
+
 console.log(`\n数学示例测试：全部 ${passed} 个通过`);

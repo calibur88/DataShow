@@ -20,7 +20,7 @@ DataShow 的**草稿开发工程**：新功能、DSQL 语法演进、测试与�
   列表视图以辅助行展示；仅含 TOTAL 项时输出单行汇总；
 - ✅ **视图类型**：表格 / 列表 实装（默认跟随 DSQL 的 TABLE/LIST 关键字，可下拉覆盖）；
   扩展视图等未实现项的规划统一记录在根目录 [`TODO`](../TODO)。
-- ✅ **DSQL v1.4**（规范：`docs/DSQL-EBNF.md`；`npm test` 62 例覆盖，按 功能/数学/DSQL语言 三大类组织）：
+- ✅ **DSQL v1.4**（规范：`docs/DSQL-EBNF.md`；`npm test` 70 例覆盖，按 功能/数学/DSQL语言 三大类组织）：
   **标记语法字面化**——关键词 `**SELECT**`、运算符 `%==%`、字符串 `'值'`、路径 `"文件夹"`；
   子句按**前件关系**解析（书写顺序自由、每条至多一次；WHERE/SORT/LIMIT 以 FROM 为前件；
   SELECT 可省略默认 `*`，FROM 为唯一必填子句；视图 TABLE/LIST 缺省 TABLE）；
