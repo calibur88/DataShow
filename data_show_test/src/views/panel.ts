@@ -6,7 +6,6 @@ import { FrontmatterEditModal } from "./frontmatter-modal";
 import {
   IMPLEMENTED_VIEWS,
   PANEL_VIEW_TYPE,
-  PLANNED_VIEWS,
   VIEW_LABELS,
   type BoardDef,
   type DataRow,
@@ -134,15 +133,13 @@ export class DatashowPanelView extends ItemView {
     toolbar.createDiv({ cls: "datashow-toolbar__spacer" });
     toolbar.createSpan({ cls: "datashow-toolbar__label", text: "视图" });
     const select = toolbar.createEl("select", { cls: "datashow-toolbar__select" }) as HTMLSelectElement;
-    const options: { value: string; label: string; disabled?: boolean }[] = [
+    const options: { value: string; label: string }[] = [
       { value: "", label: "跟随语句" },
       ...IMPLEMENTED_VIEWS.map((v) => ({ value: v, label: VIEW_LABELS[v] })),
-      ...PLANNED_VIEWS.map((v) => ({ value: v, label: VIEW_LABELS[v], disabled: true })),
     ];
     for (const opt of options) {
       const o = select.createEl("option", { text: opt.label }) as HTMLOptionElement;
       o.value = opt.value;
-      o.disabled = opt.disabled ?? false;
     }
     select.value = board.viewOverride;
     select.addEventListener("change", () => {

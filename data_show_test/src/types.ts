@@ -7,16 +7,9 @@ export const PANEL_VIEW_TYPE = "datashow-panel-view";
 export const IMPLEMENTED_VIEWS = ["table", "list"] as const;
 export type ImplementedView = (typeof IMPLEMENTED_VIEWS)[number];
 
-/** 规划中的视图类型（下拉展示但不可选） */
-export const PLANNED_VIEWS = ["board", "card", "calendar", "stats"] as const;
-
 export const VIEW_LABELS: Record<string, string> = {
   table: "表格",
   list: "列表",
-  board: "看板卡片墙（规划中）",
-  card: "卡片（规划中）",
-  calendar: "日历（规划中）",
-  stats: "统计汇总（规划中）",
 };
 
 /**
