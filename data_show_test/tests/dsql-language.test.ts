@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { executeQuery, evaluateExpr } from "../src/query/executor";
 import { parseQuery, QueryParseError } from "../src/query/parser";
+import type { ColumnSel } from "../src/query/ast";
 import { exec } from "./helpers";
 
 let passed = 0;
@@ -103,6 +104,49 @@ test("parse → execute 全链路（表达式求值与列别名一致）", () =>
   const r = exec(`**SELECT** priority %+% 1 **AS** 加一 **FROM** "Notes" **WHERE** priority %==% 2 **LIMIT** 1`);
   assert.equal(r.rows.length, 1);
   assert.equal(evaluateExpr(r.columns[0].expr, r.rows[0], null), 3);
+});
+
+/* ---------- DSQL 1.4：TOTAL 聚合与 $变量$ 校验 ---------- */
+
+test("**TOTAL** 必须带 **AS** 别名", () => {
+  assert.throws(() => parseQuery(`**SELECT** **TOTAL** 成绩 **FROM** "M"`), /TOTAL 必须带 AS 别名|必须带 \*\*AS\*\* 别名/);
+});
+
+test("**TOTAL** 操作数内引用变量 → 致命报错", () => {
+  assert.throws(
+    () => parseQuery(`**SELECT** **TOTAL** $总薪资$ **AS** $x$ **FROM** "M"`),
+    /不支持引用变量/,
+  );
+});
+
+test("WHERE 中引用 $变量$ → 致命报错（变量仅 SELECT 可用）", () => {
+  assert.throws(
+    () => parseQuery(`**SELECT** 成绩 **FROM** "M" **WHERE** $总成绩$ %>% 0`),
+    /仅可在 \*\*SELECT\*\* 中引用/,
+  );
+});
+
+test("引用未定义变量（含反向引用）→ 致命报错", () => {
+  assert.throws(() => parseQuery(`**SELECT** $平均分$ **AS** $x$ **FROM** "M"`), /变量 \$平均分\$ 未定义/);
+  assert.throws(
+    () => parseQuery(`**SELECT** 成绩 %-% $平均分$ **AS** $偏差$, ($总成绩$ %/% 2) **AS** $平均分$ **FROM** "M"`),
+    /变量 \$平均分\$ 未定义/,
+  );
+});
+
+test("别名与行字段名冲突 → 致命报错（执行期校验）", () => {
+  // 共享数据集行字段含 status：别名 status 与之冲突
+  assert.throws(
+    () => exec(`**SELECT** **TOTAL** 1 **AS** $status$ **FROM** "Notes"`),
+    /与现有字段名冲突/,
+  );
+});
+
+test("AS 别名接受 $var$ 与裸名两种写法（归一化）", () => {
+  const a = parseQuery(`**SELECT** **TOTAL** 1 **AS** $总人数$ **FROM** "M"`);
+  const b = parseQuery(`**SELECT** **TOTAL** 1 **AS** 总人数 **FROM** "M"`);
+  assert.deepEqual((a.select as ColumnSel[])[0].alias, "总人数");
+  assert.deepEqual((b.select as ColumnSel[])[0].alias, "总人数");
 });
 
 console.log(`\nDSQL 语言示例测试：全部 ${passed} 个通过`);

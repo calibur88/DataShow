@@ -1,6 +1,7 @@
 /* 数学示例测试：算术运算、乘方、比较、字符串连接、内置函数、非致命语义、UTF-8 字节序。 */
 import assert from "node:assert/strict";
 import { compareUtf8, evaluateExpr, executeQuery } from "../src/query/executor";
+import type { FieldValue } from "../src/types";
 import { makeRow, exec } from "./helpers";
 import { parseQuery } from "../src/query/parser";
 
@@ -100,6 +101,101 @@ test("SELECT * 自动列按 UTF-8 字节序排列", () => {
   const data = [makeRow("M/x.md", "M", { 你好: 1, abc: 2, Zed: 3 })];
   const r = executeQuery(parseQuery(`**SELECT** * **FROM** "M"`), data, null);
   assert.deepEqual(r.columns.map((c) => c.alias), ["Zed", "abc", "你好"]); // 0x5A < 0x61 < 0xE4…
+});
+
+/* ---------- DSQL 1.4：TOTAL 聚合与派生变量数值语义 ---------- */
+
+const students = [
+  makeRow("S/a.md", "S", { 姓名: "甲", 成绩: 100, 及格: true }),
+  makeRow("S/b.md", "S", { 姓名: "乙", 成绩: "缺考", 及格: false }),
+  makeRow("S/c.md", "S", { 姓名: "丙", 成绩: 200, 及格: true }),
+  makeRow("S/d.md", "S", { 姓名: "丁", 及格: false }),
+];
+const execS = (sql: string) => executeQuery(parseQuery(sql), students, null);
+
+test("**TOTAL** 字段求和：null 跳过、缺失行跳过", () => {
+  const r = execS(`**SELECT** **TOTAL** 成绩 **AS** $总成绩$ **FROM** "S"`);
+  assert.equal(r.globals?.get("总成绩"), 300);
+});
+
+test("**TOTAL** 1 = 总行数（COUNT 等价）；**TOTAL** 0 = 0", () => {
+  const r = execS(`**SELECT** **TOTAL** 1 **AS** $总人数$, **TOTAL** 0 **AS** $零$ **FROM** "S"`);
+  assert.equal(r.globals?.get("总人数"), 4);
+  assert.equal(r.globals?.get("零"), 0);
+});
+
+test("**TOTAL** 恒忽略 WHERE（全表口径）", () => {
+  const r = execS(`**SELECT** 姓名, **TOTAL** 1 **AS** $总人数$ **FROM** "S" **WHERE** 及格`);
+  assert.equal(r.rows.length, 2); // WHERE 只过滤显示行
+  assert.equal(r.globals?.get("总人数"), 4); // 聚合仍是全表
+});
+
+test("平均派生（总成绩/总人数，投影期链式计算）", () => {
+  const r = execS(
+    `**SELECT** **TOTAL** 成绩 **AS** $总成绩$, **TOTAL** 1 **AS** $总人数$, ($总成绩$ %/% $总人数$) **AS** $平均分$ **FROM** "S"`,
+  );
+  assert.equal(r.globals?.get("总成绩"), 300);
+  // 派生变量在投影期逐行计算：用行内变量环境求值 $平均分$ 列
+  const vars = new Map(r.globals ?? undefined);
+  const col = r.columns.find((c) => c.alias === "平均分")!;
+  const v = evaluateExpr(col.expr, r.rows[0], null, undefined, undefined, vars);
+  assert.equal(v, 75); // 300 / 4（TOTAL 1 计全部命中行）
+});
+
+test("链式派生列（从左到右，前变量可供后列引用）", () => {
+  const orders = [
+    makeRow("O/x.md", "O", { 单价: 10, 数量: 2 }),
+    makeRow("O/y.md", "O", { 单价: 5, 数量: 4 }),
+  ];
+  const r = executeQuery(
+    parseQuery(`**SELECT** 单价 %*% 数量 **AS** $小计$, $小计$ %*% 0.8 **AS** $折扣价$, $小计$ %-% $折扣价$ **AS** $优惠$ **FROM** "O"`),
+    orders,
+    null,
+  );
+  const vars = new Map<string, FieldValue>();
+  const v0 = r.columns.map((c) => {
+    const v = evaluateExpr(c.expr, r.rows[0], null, undefined, undefined, vars);
+    if (c.alias) vars.set(c.alias, v);
+    return v;
+  });
+  assert.deepEqual(v0, [20, 16, 4]);
+});
+
+test("SELECT 仅含 TOTAL 项 → 单行合成结果", () => {
+  const r = execS(`**SELECT** **TOTAL** 成绩 **AS** $总成绩$, **TOTAL** 1 **AS** $总人数$ **FROM** "S"`);
+  assert.equal(r.rows.length, 1);
+  assert.equal(r.rows[0].file.name, "汇总");
+});
+
+test("空表 TOTAL → null（仍输出合成行）", () => {
+  const r = executeQuery(
+    parseQuery(`**SELECT** **TOTAL** 成绩 **AS** $总成绩$ **FROM** "空目录"`),
+    students,
+    null,
+  );
+  assert.equal(r.rows.length, 1);
+  assert.equal(r.globals?.get("总成绩"), null);
+});
+
+test("命名空间隔离：$变量$ 查变量表，裸标识符查行字段", () => {
+  const r = execS(`**SELECT** **TOTAL** 成绩 **AS** $总成绩$, 成绩 **FROM** "S" **WHERE** 成绩 %>% 0`);
+  const vars = new Map(r.globals ?? undefined);
+  const row = r.rows[0]; // 甲：成绩 100
+  const total = evaluateExpr({ kind: "variable", name: "总成绩" }, row, null, undefined, undefined, vars);
+  const field = evaluateExpr({ kind: "field", path: "成绩" }, row, null);
+  assert.equal(total, 300);
+  assert.equal(field, 100);
+});
+
+test("TOTAL 调试信息：AGG 消息与非数值跳过警告", () => {
+  const r = executeQuery(
+    parseQuery(`**SELECT** **TOTAL** 成绩 **AS** $总成绩$ **FROM** "S"`),
+    students,
+    null,
+    { debug: true },
+  );
+  assert.ok(r.debug!.aggregates.some((m) => m.includes("总成绩 = 300")));
+  assert.ok(r.debug!.warnings.some((w) => /跳过 .* 个非数值/.test(w)));
 });
 
 console.log(`\n数学示例测试：全部 ${passed} 个通过`);

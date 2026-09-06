@@ -1,8 +1,8 @@
-# DSQL 语法规范 v1.3（EBNF）
+# DSQL 语法规范 v1.4（EBNF）
 
 > **DSQL**（DataShow Query Language）—— Obsidian 元数据查询方言
-> **DSQL 版本**：1.3（2026-09-08，测试修订 1.3.001） · 实现：`src/query/lexer.ts` · `parser.ts` · `executor.ts`
-> **注**：DSQL 语言版本与插件发布版本各自独立（当前插件 1.4.0 实现 DSQL 1.3）。
+> **DSQL 版本**：1.4（2026-09-09，新增 TOTAL 聚合与 $变量$ 派生体系） · 实现：`src/query/lexer.ts` · `parser.ts` · `executor.ts`
+> **注**：DSQL 语言版本与插件发布版本各自独立（当前插件 1.7.003 实现 DSQL 1.4）。
 > 本文档为权威依据：语法 EBNF + 语义逐条定义，变更需同步本文与测试。
 
 ---
@@ -63,7 +63,9 @@ from_clause    = **FROM** , source ;                       (* 唯一必填子句
 where_clause   = **WHERE** , expr ;                        (* 前件：FROM *)
 limit_clause   = **LIMIT** , NUMBER ;                      (* 前件：FROM *)
 select_list    = "*" | select_item , { "," , select_item } ;
-select_item    = expr , [ **AS** , ident ] ;               (* 别名为裸标识符；无别名：字段用路径名，表达式为 列N *)
+select_item    = expr , [ **AS** , alias ]                 (* 别名为裸标识符或 $变量$，归一化为裸名；*)
+               | **TOTAL** , ( ident | NUMBER ) , **AS** , alias ;  (* DSQL 1.4 聚合项：别名强制 *)
+alias          = ident | variable ;                        (* 归一化为裸名，进入变量命名空间 *)
 
 source         = or_source ;
 or_source      = and_source , { **OR** , and_source } ;      (* **AND 优先于 OR** *)
@@ -90,7 +92,8 @@ add_expr       = mul_expr , { ( %+% | %-% ) , mul_expr } ;
 mul_expr       = pow_expr , { ( %*% | %/% | %%% ) , pow_expr } ;
 pow_expr       = unary_expr , { %^% , unary_expr } ;       (* 右结合 *)
 unary_expr     = ( %+% | %-% ) , unary_expr | primary ;
-primary        = literal | function_call | ident | "(" , expr , ")" ;
+primary        = literal | function_call | ident | variable | "(" , expr , ")" ;
+variable       = "$" , ident , "$" ;                       (* DSQL 1.4：仅 SELECT 内可引用 *)
 
 literal        = STRING | PATH | NUMBER | BOOLEAN | NULL ;
 function_call  = **函数名** , "(" , [ expr , { "," , expr } ] , ")" ;
@@ -221,7 +224,53 @@ function_call  = **函数名** , "(" , [ expr , { "," , expr } ] , ")" ;
 > warnings 与 FIELD 缺失仅由执行器在 FROM/WHERE/SORT 阶段收集；SELECT 投影在面板渲染时逐格求值，
 > 其字段缺失由面板收集后并入调试信息（FIELD 条目）。非致命结果直接显示为空（—）。
 
-### 5.7 错误处理
+### 5.7 聚合与派生变量（DSQL 1.4）
+
+**两遍执行模型**：
+
+```
+第一遍 聚合遍：扫描 FROM 全量命中行（恒忽略 WHERE），计算所有 **TOTAL** 项 → 写入变量表
+第二遍 投影遍：WHERE → SORT → LIMIT → SELECT 逐行求值（$变量$ 查变量表，裸标识符查行字段）
+```
+
+**变量表查询规则（两套命名空间完全隔离）**：
+
+| 名称来源 | 写法 | 命名空间 | 示例 |
+|---|---|---|---|
+| frontmatter / file.* | 裸标识符 | 行字段命名空间 | `姓名`、`file.name` |
+| **TOTAL** 聚合 | `$变量$` | 变量命名空间 | `$总成绩$` |
+| 表达式派生（**AS**） | `$变量$` | 变量命名空间 | `$平均分$` |
+
+- `$平均分$` → 查变量表；`平均分` → 查行字段；AS 定义的别名（含表达式派生列）自动进入变量表；
+- SELECT 列表**从左到右**计算，前面的派生变量可被后面的列引用（链式派生），不可反向引用；
+- 变量仅存在于当前查询执行期间，不写回任何数据；**仅 SELECT 内可引用**
+  （WHERE / SORT 中出现 `$变量$` 为致命错误——每行派生变量在投影阶段才计算，时序上不可用）。
+
+**别名冲突规则（致命错误）**：AS 右侧的变量名与行字段命名空间中的字段名重复时，执行期直接报错：
+
+```sql
+-- ❌ 报错：别名 '$平均分$' 与现有字段名冲突
+**SELECT** **TOTAL** 成绩 **AS** $平均分$, 平均分 **FROM** "学生"
+-- 解决方法：改用其他别名
+```
+
+**TOTAL 计算规则**：
+
+| 输入 | 结果 |
+|---|---|
+| 数值字段 | 全表非 null 数值之和（null/缺失跳过；非数值跳过并计入 warnings） |
+| 全无数值 / 空表 | `null`（计入 warnings） |
+| 常量 `**TOTAL** 1` | 总行数（`COUNT(*)` 的等价替代；`**TOTAL** 0` 恒为 0） |
+
+- `**TOTAL**` 的行集口径恒为 FROM 全量命中行，**始终忽略 WHERE**（全局基准值，供每行算占比/偏差）；
+  过滤后聚合暂不支持——变通：单独建看板，或用标签 / 子文件夹等数据源缩小口径使 TOTAL 恰为所需范围；
+- SELECT **仅含 TOTAL 项**时输出单行合成结果（文件名"汇总"，列名为变量名）；
+- 派生变量列为**只读**（表格双击编辑不生效；列表视图以辅助信息行展示）。
+
+**调试扩展**：debug 对象新增 `aggregates`（各 TOTAL 项结果，调试页 AGG 行）；
+TOTAL 的非数值跳过 / 空表 / 字段缺失分别计入 warnings / fieldMisses。
+
+### 5.8 错误处理
 
 - 解析错误**带行列号**，格式 `[DSQL] 第 N 行第 M 列：预期 X，实际 Y`，直接报错不执行；
 - 词法层拦截：未知 `**WORD**`、未包裹的关键词/运算符、字符串未闭合；
@@ -291,6 +340,8 @@ function_call  = **函数名** , "(" , [ expr , { "," , expr } ] , ")" ;
 
 > 以下记录 DSQL 语言规范本身的版本演进，与插件发布版本号各自独立。
 
+> 以下记录 DSQL 语言规范本身的版本演进，与插件发布版本号各自独立。
+
 - v1.1（2026-09-07）：SORT BY 自定义优先级；调试信息规范。
 - v1.2（2026-09-08）：标记语法字面化（`**关键词**` / `%运算符%`）；SELECT 必须子句；表达式完备；sqrt/cbrt/root；多级排序。不兼容 v1.1。
 - **v1.2 修订 2（2026-09-08，当前）**：
@@ -314,3 +365,9 @@ function_call  = **函数名** , "(" , [ expr , { "," , expr } ] , ")" ;
     数字不支持科学计数法与负数字面量；自动列按 UTF-8 字节序（实现同步修正）；
   - 空 `**BY** ()` 列表：视为无自定义优先级并计入 warnings（实现新增）；
   - 调试 `from` 描述明确为「源解析后的命中行数（去重后）」。
+- **v1.4（2026-09-09，当前）**：新增 **TOTAL 全表聚合与 $变量$ 派生体系**：
+  - `**TOTAL** ( ident | NUMBER ) **AS** 别名`（别名强制）作为 select_item；两遍执行模型（聚合遍忽略 WHERE）；
+  - `$变量$` 引用（variable primary），AS 别名归一化为裸名进入变量命名空间；命名空间与行字段隔离，
+    但**别名与行字段同名 → 致命报错**；
+  - 变量仅 SELECT 内可引用（WHERE/SORT 报错）；不可反向引用（未定义变量报错）；TOTAL 操作数内禁止引用变量；
+  - 派生列只读；SELECT 仅含 TOTAL 项时输出单行合成结果；debug 新增 aggregates。

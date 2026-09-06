@@ -1,5 +1,5 @@
 /**
- * DSQL v1.2 解析器（递归下降）。
+ * DSQL v1.4 解析器（递归下降）。
  *
  * 子句按前件关系解析：各子句至多出现一次，书写顺序不限；
  * WHERE / SORT / LIMIT 以 **FROM** 为前件（必须在其之后），SELECT 可省略（默认全部字段）。
@@ -26,6 +26,10 @@ export function parseQuery(source: string): Query {
 
 class Parser {
   private pos = 0;
+  /** 是否处于 SELECT 列表内（DSQL 1.4：$变量$ 仅在 SELECT 中可引用） */
+  private inSelect = false;
+  private variableTokens = new Map<string, Token>();
+  private totalToken: Token | null = null;
 
   constructor(private tokens: Token[]) {}
 
@@ -121,13 +125,97 @@ class Parser {
       return "*";
     }
     const items: ColumnSel[] = [];
-    do {
-      const expr = this.parseExpr();
-      let alias: string | null = null;
-      if (this.matchKw("AS")) alias = this.expectIdent("**AS** 后应为字段别名").value;
-      items.push({ expr, alias });
-    } while (this.matchPunct(","));
+    this.inSelect = true;
+    try {
+      do {
+        if (this.isMarked("TOTAL")) {
+          items.push(this.parseTotalItem());
+          continue;
+        }
+        const expr = this.parseExpr();
+        let alias: string | null = null;
+        if (this.matchKw("AS")) alias = this.parseAlias();
+        items.push({ expr, alias });
+      } while (this.matchPunct(","));
+    } finally {
+      this.inSelect = false;
+    }
+    this.validateVariables(items);
     return items;
+  }
+
+  /** **TOTAL** 聚合项：操作数限字段/数字，**AS** 别名强制（DSQL 1.4） */
+  private parseTotalItem(): ColumnSel {
+    const start = this.advance(); // TOTAL
+    this.totalToken = start;
+    const tok = this.peek();
+    let expr: Expr;
+    if (tok.type === "variable") {
+      throw this.err(tok, `**TOTAL** 不支持引用变量（$${tok.value}$ 看不到当前行）`);
+    }
+    if (tok.type === "ident") {
+      const lower = tok.value.toLowerCase();
+      if (lower === "true" || lower === "false" || lower === "null") {
+        throw this.err(tok, "**TOTAL** 操作数应为字段名或数字");
+      }
+      this.advance();
+      expr = { kind: "field", path: tok.value };
+    } else if (tok.type === "number") {
+      this.advance();
+      expr = { kind: "lit", value: parseFloat(tok.value) || 0 };
+    } else {
+      throw this.err(tok, "**TOTAL** 操作数应为字段名或数字（如 **TOTAL** 薪资 / **TOTAL** 1）");
+    }
+    if (!this.matchKw("AS")) {
+      throw this.err(start, "**TOTAL** 必须带 **AS** 别名（如 **TOTAL** 成绩 **AS** $总成绩$）");
+    }
+    return { expr, alias: this.parseAlias(), total: true };
+  }
+
+  /** AS 别名：接受裸标识符或 $变量$ 写法，统一归一化为裸名 */
+  private parseAlias(): string {
+    const tok = this.peek();
+    if (tok.type === "variable") {
+      this.advance();
+      return tok.value;
+    }
+    return this.expectIdent("**AS** 后应为别名（标识符或 $变量$）").value;
+  }
+
+  /** 静态校验：$变量$ 引用必须匹配更早定义的别名；TOTAL 操作数内禁止引用变量 */
+  private validateVariables(items: ColumnSel[]): void {
+    const defined = new Set<string>();
+    const check = (expr: Expr, inTotal: boolean): void => {
+      switch (expr.kind) {
+        case "variable":
+          if (inTotal) {
+            throw this.err(this.totalToken ?? this.tokens[0], `**TOTAL** 不支持引用变量（$${expr.name}$ 看不到当前行）`);
+          }
+          if (!defined.has(expr.name)) {
+            throw this.err(
+              this.variableTokens.get(expr.name) ?? this.tokens[0],
+              `变量 $${expr.name}$ 未定义（引用前需在 **SELECT** 中以 **AS** 定义，且不能引用其后定义的变量）`,
+            );
+          }
+          return;
+        case "binary":
+          check(expr.left, inTotal);
+          check(expr.right, inTotal);
+          return;
+        case "unary":
+          check(expr.expr, inTotal);
+          return;
+        case "call":
+          for (const arg of expr.args) check(arg, inTotal);
+          return;
+        default:
+          return;
+      }
+    };
+    for (const item of items) {
+      if (item.alias) defined.add(item.alias);
+      check(item.expr, item.total === true);
+    }
   }
 
   /* ---------- FROM（AND 优先于 OR） ---------- */
@@ -297,6 +385,14 @@ class Parser {
     if (tok.type === "string" || tok.type === "path") {
       this.advance();
       return { kind: "lit", value: tok.value };
+    }
+    if (tok.type === "variable") {
+      if (!this.inSelect) {
+        throw this.err(tok, `变量 $${tok.value}$ 仅可在 **SELECT** 中引用（WHERE / **SORT** 无法看到每行派生变量）`);
+      }
+      this.advance();
+      this.variableTokens.set(tok.value, tok);
+      return { kind: "variable", name: tok.value };
     }
     if (tok.type === "number") {
       this.advance();

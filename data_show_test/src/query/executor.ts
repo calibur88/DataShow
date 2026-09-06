@@ -1,7 +1,8 @@
 /**
- * DSQL v1.2 执行器。
+ * DSQL v1.4 执行器。
  *
- * 执行顺序：FROM 源解析 → WHERE 行过滤 → SORT 排序 → LIMIT 截断 → SELECT 投影。
+ * 两遍执行模型：第一遍聚合遍（FROM 全量命中行，**忽略 WHERE**，计算 **TOTAL** → 变量表）；
+ * 第二遍投影遍（WHERE → SORT → LIMIT → SELECT 投影，$变量$ 查变量表、裸标识符查行字段）。
  * 语义：类型不匹配/除零/缺字段为非致命（求值 null，计入 warnings）；排序 UTF-8 字节序确定性方案。
  */
 import type { BinOp, Expr, Query, Source } from "./ast";
@@ -29,14 +30,18 @@ export interface QueryDebug {
   fieldMisses: FieldMiss[];
   warnings: string[];
   sourceStats: SourceStat[];
+  /** DSQL 1.4：聚合遍结果（**TOTAL** 项，按 SELECT 顺序） */
+  aggregates: string[];
   executionTimeMs: number;
 }
 
 export interface ResultSet {
   view: "table" | "list";
   /** 实际使用的列（SELECT * 已展开为字段并集） */
-  columns: { alias: string; expr: Expr }[];
+  columns: { alias: string; expr: Expr; total?: true }[];
   rows: DataRow[];
+  /** DSQL 1.4：全局变量表（**TOTAL** 聚合结果，裸名键）；无聚合项时为 null */
+  globals: Map<string, FieldValue> | null;
   debug?: QueryDebug;
 }
 
@@ -77,6 +82,47 @@ export function executeQuery(
   const sourceStats: SourceStat[] | null = enabled ? collectSourceStats(q.from, rows) : null;
   const fromMsg = `输入 ${rows.length} 行 → 命中 ${matched.length} 行`;
 
+  // ---- 聚合遍（DSQL 1.4：恒忽略 WHERE，扫描 FROM 全量命中行） ----
+  const totalItems = q.select === "*" ? [] : q.select.filter((c) => c.total);
+  let globals: Map<string, FieldValue> | null = null;
+  const aggMsgs: string[] = [];
+  if (totalItems.length > 0) {
+    // 别名冲突校验：AS 别名（变量命名空间）与行字段命名空间冲突 → 致命错误
+    const fieldNames = new Set<string>();
+    for (const row of matched) for (const k of Object.keys(row.fields)) fieldNames.add(k);
+    for (const item of totalItems) {
+      if (item.alias && fieldNames.has(item.alias)) {
+        throw new Error(`[DSQL] 别名 '$${item.alias}$' 与现有字段名冲突，请改用其他别名`);
+      }
+    }
+    globals = new Map();
+    for (const item of totalItems) {
+      const alias = item.alias!;
+      let value = null;
+      if (matched.length === 0) {
+        warn?.("**TOTAL** 空表（FROM 命中 0 行），返回 null");
+      } else if (item.expr.kind === "lit" && typeof item.expr.value === "number") {
+        value = item.expr.value * matched.length; // TOTAL 1 → 总行数；TOTAL 0 → 0
+      } else {
+        let sum = null;
+        let skipped = 0;
+        for (const row of matched) {
+          const v = evaluateExpr(item.expr, row, ctx, track, warn);
+          if (typeof v === "number") sum = (sum ?? 0) + v;
+          else if (v != null) skipped++;
+        }
+        if (sum == null) {
+          warn?.(`**TOTAL** ${item.alias} 无数值可累加（字段缺失或全为非数值），返回 null`);
+        } else {
+          value = sum;
+          if (skipped > 0) warn?.(`**TOTAL** ${item.alias} 跳过 ${skipped} 个非数值行`);
+        }
+      }
+      globals.set(alias, value);
+      aggMsgs.push(`${alias} = ${value === null ? "null" : value}`);
+    }
+  }
+
   // ---- WHERE ----
   let whereMsg: string | null = null;
   if (q.where) {
@@ -111,7 +157,12 @@ export function executeQuery(
   // ---- SELECT 投影 ----
   const columns = resolveColumns(q.select, matched);
 
-  const result: ResultSet = { view: q.view, columns, rows: matched };
+  // SELECT 仅含 TOTAL 项 → 单行合成结果（行字段为空，文件名"汇总"）
+  if (totalItems.length > 0 && q.select !== "*" && totalItems.length === q.select.length) {
+    matched = [SYNTH_ROW];
+  }
+
+  const result: ResultSet = { view: q.view, columns, rows: matched, globals };
   if (enabled) {
     result.debug = {
       from: fromMsg,
@@ -123,11 +174,19 @@ export function executeQuery(
         count > 1 ? `${msg}（${count} 次）` : msg,
       ),
       sourceStats: sourceStats ?? [],
+      aggregates: aggMsgs,
       executionTimeMs: round1(now() - started),
     };
   }
   return result;
 }
+
+/** TOTAL-only 查询的单行合成结果 */
+const SYNTH_ROW: DataRow = {
+  path: "",
+  file: { path: "", name: "汇总", folder: "", ext: "md", size: 0, ctime: 0, mtime: 0, outlinks: [], inlinks: [] },
+  fields: {},
+};
 
 /* ---------- SELECT 列 ---------- */
 
@@ -141,6 +200,7 @@ function resolveColumns(select: Query["select"], rows: DataRow[]): ResultSet["co
   return select.map((sel, i) => ({
     alias: sel.alias ?? defaultAlias(sel.expr, i),
     expr: sel.expr,
+    total: sel.total,
   }));
 }
 
@@ -161,16 +221,19 @@ export function evaluateExpr(
   ctx: DataRow | null,
   track?: FieldTracker,
   warn?: WarnSink,
+  vars?: ReadonlyMap<string, FieldValue>,
 ): FieldValue {
   switch (expr.kind) {
     case "lit":
       return expr.value;
+    case "variable":
+      return vars?.get(expr.name) ?? null;
     case "field": {
       const v = resolveField(row, expr.path, ctx);
       return track ? track(row, expr.path, v) : v;
     }
     case "call": {
-      const args = expr.args.map((a) => evaluateExpr(a, row, ctx, track, warn));
+      const args = expr.args.map((a) => evaluateExpr(a, row, ctx, track, warn, vars));
       try {
         return callFunction(expr.name, args);
       } catch {
@@ -179,8 +242,8 @@ export function evaluateExpr(
       }
     }
     case "unary": {
-      if (expr.op === "not") return !truthy(evaluateExpr(expr.expr, row, ctx, track, warn));
-      const v = evaluateExpr(expr.expr, row, ctx, track, warn);
+      if (expr.op === "not") return !truthy(evaluateExpr(expr.expr, row, ctx, track, warn, vars));
+      const v = evaluateExpr(expr.expr, row, ctx, track, warn, vars);
       if (typeof v !== "number") {
         warn?.("一元正负号作用于非数字");
         return null;
@@ -188,7 +251,7 @@ export function evaluateExpr(
       return expr.op === "-" ? -v : v;
     }
     case "binary":
-      return evalBinary(expr.op, expr.left, expr.right, row, ctx, track, warn);
+      return evalBinary(expr.op, expr.left, expr.right, row, ctx, track, warn, vars);
   }
 }
 
@@ -200,15 +263,16 @@ function evalBinary(
   ctx: DataRow | null,
   track?: FieldTracker,
   warn?: WarnSink,
+  vars?: ReadonlyMap<string, FieldValue>,
 ): FieldValue {
   if (op === "and") {
-    return truthy(evaluateExpr(left, row, ctx, track, warn)) && truthy(evaluateExpr(right, row, ctx, track, warn));
+    return truthy(evaluateExpr(left, row, ctx, track, warn, vars)) && truthy(evaluateExpr(right, row, ctx, track, warn, vars));
   }
   if (op === "or") {
-    return truthy(evaluateExpr(left, row, ctx, track, warn)) || truthy(evaluateExpr(right, row, ctx, track, warn));
+    return truthy(evaluateExpr(left, row, ctx, track, warn, vars)) || truthy(evaluateExpr(right, row, ctx, track, warn, vars));
   }
-  const l = evaluateExpr(left, row, ctx, track, warn);
-  const r = evaluateExpr(right, row, ctx, track, warn);
+  const l = evaluateExpr(left, row, ctx, track, warn, vars);
+  const r = evaluateExpr(right, row, ctx, track, warn, vars);
 
   switch (op) {
     case "==":

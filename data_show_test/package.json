@@ -1,6 +1,6 @@
 {
   "name": "datashow-dev",
-  "version": "1.7.002",
+  "version": "1.7.003",
   "description": "Development workspace for the DataShow plugin.",
   "main": "main.js",
   "scripts": {

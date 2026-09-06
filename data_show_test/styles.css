@@ -242,6 +242,21 @@
   cursor: pointer;
 }
 
+/* ===== 列表视图派生变量辅助行 ===== */
+.datashow-result__derived {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.datashow-result__derived-name {
+  min-width: 72px;
+  font-weight: 600;
+  color: var(--text-faint);
+}
+
 /* ===== 结果区标签页（查询结果 / 调试信息） ===== */
 .datashow-tabs {
   display: flex;
