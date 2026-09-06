@@ -1,0 +1,21 @@
+# 依赖
+node_modules/
+
+# 构建产物（npm run build 生成并自动同步到 test-vault）
+data_show/main.js
+data_show_test/main.js
+
+# test-vault 中由构建自动同步的插件部署副本
+data_show/test-vault/.obsidian/plugins/
+data_show_test/test-vault/.obsidian/plugins/
+
+# Obsidian 本地工作区状态
+*.workspace.json
+data_show*/test-vault/.obsidian/workspace*.json
+
+# AI 会话本地文件
+.zcode/
+
+# 系统与编辑器杂项
+Thumbs.db
+.DS_Store

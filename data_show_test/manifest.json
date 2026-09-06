@@ -1,0 +1,9 @@
+{
+  "id": "datashow-dev",
+  "name": "DataShow Dev",
+  "version": "1.6.0",
+  "minAppVersion": "1.4.0",
+  "description": "Development build of DataShow. Do not redistribute.",
+  "author": "datashow",
+  "isDesktopOnly": false
+}

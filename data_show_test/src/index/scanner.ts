@@ -1,0 +1,96 @@
+import { App, TAbstractFile, TFile, debounce } from "obsidian";
+import { buildRow } from "./row-builder";
+import type { DataStore } from "./store";
+
+/**
+ * 扫描器：启动时全量扫描 metadataCache，之后监听增量事件维护 store。
+ * 批量事件经 debounce 合并，一次 flush 内重算一次反向链接。
+ */
+export class VaultScanner {
+  private pending = new Set<string>();
+  private flushDebounced = debounce(() => this.flush(), 300, true);
+
+  /** Obsidian 在启动完成、链接全部解析后触发一次 */
+  private onResolved = (): void => {
+    this.fullRebuild();
+  };
+
+  private onCacheChanged = (file: TFile): void => {
+    if (file.extension !== "md") return;
+    this.pending.add(file.path);
+    this.flushDebounced();
+  };
+
+  private onDeleted = (file: TAbstractFile): void => {
+    this.store.remove(file.path);
+  };
+
+  private onRenamed = (file: TAbstractFile, oldPath: string): void => {
+    this.store.remove(oldPath);
+    if (file instanceof TFile && file.extension === "md") {
+      this.pending.add(file.path);
+      this.flushDebounced();
+    }
+  };
+
+  constructor(
+    private app: App,
+    private store: DataStore,
+  ) {}
+
+  /** 注册事件并做首扫。register 由插件提供（保证卸载时清理）。 */
+  start(register: (ref: unknown) => void): void {
+    register(this.app.metadataCache.on("resolved", this.onResolved));
+    register(this.app.metadataCache.on("changed", this.onCacheChanged));
+    register(this.app.vault.on("delete", this.onDeleted));
+    register(this.app.vault.on("rename", this.onRenamed));
+    this.fullRebuild();
+  }
+
+  /** 全量重建（首扫 / resolved 回落）。 */
+  fullRebuild(): void {
+    const reverse = reverseLinks(this.app.metadataCache.resolvedLinks);
+    const rows = this.app.vault
+      .getMarkdownFiles()
+      .map((file) =>
+        buildRow(
+          file,
+          this.app.metadataCache.getFileCache(file)?.frontmatter,
+          Object.keys(this.app.metadataCache.resolvedLinks[file.path] ?? {}),
+          reverse[file.path] ?? [],
+        ),
+      );
+    this.store.upsertMany(rows);
+  }
+
+  private flush(): void {
+    if (this.pending.size === 0) return;
+    const reverse = reverseLinks(this.app.metadataCache.resolvedLinks);
+    for (const path of this.pending) {
+      const file = this.app.vault.getFileByPath(path);
+      if (!(file instanceof TFile)) continue;
+      this.store.upsert(
+        buildRow(
+          file,
+          this.app.metadataCache.getFileCache(file)?.frontmatter,
+          Object.keys(this.app.metadataCache.resolvedLinks[path] ?? {}),
+          reverse[path] ?? [],
+        ),
+      );
+    }
+    this.pending.clear();
+  }
+}
+
+/** resolvedLinks 的反向索引：目标路径 → 入链来源列表。 */
+function reverseLinks(
+  resolved: Record<string, Record<string, number>>,
+): Record<string, string[]> {
+  const reverse: Record<string, string[]> = {};
+  for (const [source, targets] of Object.entries(resolved)) {
+    for (const target of Object.keys(targets)) {
+      (reverse[target] ??= []).push(source);
+    }
+  }
+  return reverse;
+}

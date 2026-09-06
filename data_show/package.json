@@ -1,0 +1,19 @@
+{
+  "name": "data-show",
+  "version": "1.6.0",
+  "description": "Metadata boards for Obsidian: index note properties, query them with DSQL and render table/list views.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.24.0",
+    "obsidian": "latest",
+    "typescript": "^5.7.0"
+  }
+}

@@ -1,0 +1,238 @@
+/**
+ * DSQL v1.2 分词器。
+ *
+ * 标记体系（按字面实现）：
+ * - 关键词/内置函数：**WORD** 包裹（关键词约定全大写，函数约定小写）
+ * - 运算符：%op% 包裹（%==% %!=% %>=% %<=% %>% %<% %||% %+% %-% %*% %/% %%% %^%）
+ * - 路径："..."（双引号）；字符串：'...'（单引号）
+ * - 裸标识符：字段名（支持 Unicode 与带点路径 file.name / this.状态）
+ * - 裸字面量：true / false / null
+ */
+
+export type TokenType =
+  | "marked"   // **WORD**（关键词或函数名）
+  | "ident"    // 字段名（可含点）
+  | "string"   // '字符串'
+  | "path"     // "路径"
+  | "number"
+  | "op"       // %op%
+  | "punct"    // ( ) , # *
+  | "eof";
+
+export interface Token {
+  type: TokenType;
+  value: string;
+  line: number;
+  col: number;
+}
+
+export class LexError extends Error {
+  constructor(
+    message: string,
+    public line: number,
+    public col: number,
+  ) {
+    super(message);
+  }
+}
+
+export const KEYWORDS = new Set([
+  "SELECT", "FROM", "WHERE", "SORT", "BY", "AND", "OR", "NOT", "AS",
+  "LIMIT", "ASC", "DESC", "TABLE", "LIST", "WITHOUT", "ID",
+]);
+
+export const FUNCTIONS = new Set([
+  "sqrt", "cbrt", "root", "contains", "length", "lower", "upper", "empty",
+]);
+
+/** 运算符表（按长度降序匹配，%%%（取模）与单字符运算符共存） */
+const OPS = [
+  "%==%", "%!=%", "%>=%", "%<=%", "%||%",
+  "%+%", "%-%", "%*%", "%/%", "%%%", "%^%", "%>%", "%<%",
+].sort((a, b) => b.length - a.length);
+
+const IDENT_START = /[\p{L}_$]/u;
+const IDENT_PART = /[\p{L}\p{N}_$]/u;
+const DIGIT = /[0-9]/;
+
+export class Lexer {
+  private pos = 0;
+  private line = 1;
+  private col = 1;
+
+  constructor(private src: string) {}
+
+  tokenize(): Token[] {
+    const tokens: Token[] = [];
+    for (;;) {
+      const tok = this.next();
+      tokens.push(tok);
+      if (tok.type === "eof") return tokens;
+    }
+  }
+
+  private next(): Token {
+    this.skipWsAndComments();
+    const { line, col } = this;
+    if (this.pos >= this.src.length) return { type: "eof", value: "", line, col };
+
+    const ch = this.src[this.pos];
+
+    if (ch === "'") return this.readString("'", line, col);
+    if (ch === '"') return this.readString('"', line, col);
+    if (ch === "%") return this.readOp(line, col);
+    if (ch === "*") return this.readStar(line, col);
+    if (DIGIT.test(ch)) return this.readNumber(line, col);
+    if (IDENT_START.test(ch)) return this.readIdent(line, col);
+    return this.readPunct(line, col);
+  }
+
+  private skipWsAndComments(): void {
+    for (;;) {
+      const ch = this.src[this.pos];
+      if (ch === "\n") {
+        this.pos++;
+        this.line++;
+        this.col = 1;
+      } else if (ch === " " || ch === "\t" || ch === "\r") {
+        this.pos++;
+        this.col++;
+      } else if (ch === "-" && this.src[this.pos + 1] === "-") {
+        while (this.pos < this.src.length && this.src[this.pos] !== "\n") {
+          this.pos++;
+          this.col++;
+        }
+      } else {
+        return;
+      }
+    }
+  }
+
+  /** '字符串' 与 "路径"：支持 \' \" \\ 转义，不可跨行 */
+  private readString(quote: string, line: number, col: number): Token {
+    this.pos++;
+    this.col++;
+    let value = "";
+    for (;;) {
+      if (this.pos >= this.src.length) throw new LexError("字符串未闭合", line, col);
+      const ch = this.src[this.pos];
+      if (ch === "\\") {
+        const nxt = this.src[this.pos + 1];
+        if (nxt === quote || nxt === "\\") {
+          value += nxt;
+          this.pos += 2;
+          this.col += 2;
+          continue;
+        }
+      }
+      if (ch === quote) {
+        this.pos++;
+        this.col++;
+        return {
+          type: quote === "'" ? "string" : "path",
+          value,
+          line,
+          col,
+        };
+      }
+      if (ch === "\n") throw new LexError("字符串不能跨行", line, col);
+      value += ch;
+      this.pos++;
+      this.col++;
+    }
+  }
+
+  private readOp(line: number, col: number): Token {
+    const rest = this.src.slice(this.pos);
+    for (const op of OPS) {
+      if (rest.startsWith(op)) {
+        this.pos += op.length;
+        this.col += op.length;
+        return { type: "op", value: op.slice(1, -1), line, col }; // 去掉两侧 % → "=="
+      }
+    }
+    throw new LexError("无法识别的运算符（运算符需 % 包裹，如 %==% %+%）", line, col);
+  }
+
+  /** **WORD**（关键词/函数）或裸 *（SELECT 的全部字段） */
+  private readStar(line: number, col: number): Token {
+    if (this.src[this.pos + 1] !== "*") {
+      this.pos++;
+      this.col++;
+      return { type: "punct", value: "*", line, col };
+    }
+    this.pos += 2;
+    this.col += 2;
+    let word = "";
+    for (;;) {
+      if (this.pos >= this.src.length) throw new LexError("** 标记未闭合", line, col);
+      const ch = this.src[this.pos];
+      if (ch === "*" && this.src[this.pos + 1] === "*") {
+        this.pos += 2;
+        this.col += 2;
+        break;
+      }
+      if (ch === "\n") throw new LexError("** 标记不能跨行", line, col);
+      word += ch;
+      this.pos++;
+      this.col++;
+    }
+    const upper = word.toUpperCase();
+    const lower = word.toLowerCase();
+    if (KEYWORDS.has(upper)) {
+      return { type: "marked", value: upper, line, col };
+    }
+    if (FUNCTIONS.has(lower)) {
+      return { type: "marked", value: lower, line, col };
+    }
+    throw new LexError(
+      `未知关键词 **${word}**（关键词全大写，函数名小写：sqrt/cbrt/root/contains/length/lower/upper/empty）`,
+      line,
+      col,
+    );
+  }
+
+  private readNumber(line: number, col: number): Token {
+    let value = "";
+    while (this.pos < this.src.length && /[0-9.]/.test(this.src[this.pos])) {
+      value += this.src[this.pos];
+      this.pos++;
+      this.col++;
+    }
+    return { type: "number", value, line, col };
+  }
+
+  /** 字段名（支持 Unicode；带点路径合并为单 token：file.name / this.状态） */
+  private readIdent(line: number, col: number): Token {
+    let value = "";
+    for (;;) {
+      while (this.pos < this.src.length && IDENT_PART.test(this.src[this.pos])) {
+        value += this.src[this.pos];
+        this.pos++;
+        this.col++;
+      }
+      if (this.src[this.pos] === "." && IDENT_START.test(this.src[this.pos + 1] ?? "")) {
+        value += ".";
+        this.pos++;
+        this.col++;
+        continue;
+      }
+      break;
+    }
+    return { type: "ident", value, line, col };
+  }
+
+  private readPunct(line: number, col: number): Token {
+    const ch = this.src[this.pos];
+    if ("(),.#".includes(ch)) {
+      this.pos++;
+      this.col++;
+      return { type: "punct", value: ch, line, col };
+    }
+    throw new LexError(
+      `无法识别的字符「${ch}」（关键词需 ** 包裹、运算符需 % 包裹）`,
+      line,
+      col,
+    );
+  }
+}
