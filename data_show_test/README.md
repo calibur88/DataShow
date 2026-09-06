@@ -4,7 +4,7 @@ DataShow 的**草稿开发工程**：新功能、DSQL 语法演进、测试与�
 稳定后清理并发布到 `../data_show`（正式目录，插件 id `data-show`）。
 
 - 本目录插件 id 为 `datashow-dev`，可与正式版 `data-show` 在同一 vault 中共存。
-- 规范与方案文档：`docs/DSQL-EBNF.md`、`docs/datashow方案.md`。
+- 规范文档：`docs/DSQL-EBNF.md`。
 - **版本规则**：本目录为测试版，版本号末段递增（当前与正式版同步为 `1.7.0`，下次改进为 `1.7.001`）；
   测试通过并经用户允许后迁移至 `../data_show`（正式版，版本号定为 `x.y.0`）。
 

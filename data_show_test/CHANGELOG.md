@@ -74,7 +74,7 @@
 ### 0.1.0（2026-09-06）插件骨架
 
 - 前期调研 Dataview / Datacore / Breadcrumbs 源码与维护现状，产出架构方案
-  （五层单向依赖 + ADR 决策记录，见 `docs/datashow方案.md`）。
+  （五层单向依赖 + ADR 决策记录，方案文档已废弃删除）。
 - P1 脚手架：manifest / esbuild / tsconfig / test-vault 热更新；
 - 插件设置页（常规项）；侧栏树（`DataShow` 目录下 .md 即面板，子目录即分组，事件自动刷新）；
   主区面板视图（board 视图骨架 + 正文 Markdown 渲染）；ribbon 图标与命令。

@@ -22,7 +22,7 @@ DataShow 是面向 Obsidian 的元数据看板插件：
 | 目录 | 定位 | 插件 id | 版本号 |
 |---|---|---|---|
 | `data_show/` | 正式版：清理后的插件工程，只含源码、构建配置与用户文档 | `data-show` | `x.y.0` |
-| `data_show_test/` | 草稿开发目录：新功能、DSQL 语法演进、测试、规范与方案文档 | `datashow-dev` | `x.y.001+`（当前与正式版同步于 1.7.0） |
+| `data_show_test/` | 草稿开发目录：新功能、DSQL 语法演进、测试与规范文档 | `datashow-dev` | `x.y.001+`（当前与正式版同步于 1.7.0） |
 
 **开发循环**（版本规则见根 [README.md](README.md)）：
 
@@ -101,7 +101,6 @@ esbuild 配置自动同步进各自 vault，无需手工拷贝。
 | DSQL 规范 | [`data_show/docs/DSQL-EBNF.md`](data_show/docs/DSQL-EBNF.md) | DSQL v1.3 权威语法规范（EBNF + 语义） |
 | 正式版日志 | [`data_show/CHANGELOG.md`](data_show/CHANGELOG.md) | 从简 |
 | 测试版日志 | [`data_show_test/CHANGELOG.md`](data_show_test/CHANGELOG.md) | 详细 |
-| 方案文档（历史） | [`data_show_test/docs/datashow方案.md`](data_show_test/docs/datashow方案.md) | 早期设计 |
 | 计划归档 | [`.zcode/plans/history.md`](.zcode/plans/history.md) | 已落地的会话计划 |
 
 ## 6. 现状与规划
