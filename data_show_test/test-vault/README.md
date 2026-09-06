@@ -1,11 +1,12 @@
-# DataShow 使用与 DSQL v1.2 语法参考
+# DataShow 功能展示 vault
 
-> **DSQL**（DataShow Query Language）——本插件的查询语言。
+> 本 vault 仅用于**功能展示**：用 Obsidian 打开并启用对应插件，即可演示
+> DSQL 查询、表格/列表视图与 frontmatter 属性编辑。
 > 看板配置：**设置 → 第三方插件 → DataShow → 看板**（只填名称/类型/说明）；
 > **DSQL 在看板面板里编辑**（输入自动保存，「刷新」立即重跑，「视图」下拉切换表格/列表）。
 >
-> ⚠️ **v1.2 标记语法**：关键词用 `**` 包裹（如 `**SELECT**`）、运算符用 `%` 包裹（如 `%==%`）、
-> 字符串用单引号 `'值'`、路径用双引号 `"文件夹"`。旧版裸关键词写法不再解析。
+> **DSQL v1.3 标记语法**：关键词用 `**` 包裹（如 `**SELECT**`）、运算符用 `%` 包裹（如 `%==%`）、
+> 字符串用单引号 `'值'`、路径用双引号 `"文件夹"`。完整规范见 `docs/DSQL-EBNF.md`。
 
 ---
 
@@ -28,10 +29,10 @@
 | 写法 | 含义 |
 |---|---|
 | `"Notes"` | 文件夹（含全部子文件夹，大小写不敏感） |
-| `"Notes" **OR** "Inbox"` | 并集 |
-| `"Notes" **AND** "Archive"` | 交集 |
+| `"Notes" **OR** "Projects"` | 并集 |
+| `"Notes" **AND** #task` | 交集 |
 | `#task` | 含该标签的笔记 |
-| `("Notes" **OR** "Inbox") **AND** ...` | 括号组合 |
+| `("Notes" **OR** "Projects") **AND** ...` | 括号组合 |
 
 > **AND 优先于 OR**：`"A" **OR** "B" **AND** #x` 等价 `"A" **OR** ("B" **AND** #x)`，复杂组合建议加括号。
 
@@ -98,10 +99,9 @@
 
 ## 六、可复制示例
 
-测试数据（多项目结构）：
-- `Notes/任务A|B|C.md`（任务字段 + 互链）、`Notes/想法.md`（字段缺失）、`Notes/空白.md`（无 frontmatter）、`Notes/子组/归档任务.md`（子文件夹）
+演示数据（多项目结构）：
+- `Notes/任务A|B|C.md`（任务字段 + 互链）、`Notes/子组/归档任务.md`（子文件夹递归演示）
 - `Projects/Alpha/`（需求评审/开发/测试）与 `Projects/Beta/`（设计/开发/联调）：同 schema 多组数据（project/owner/priority/spent/estimate/tags）
-- `Archive/2025/旧任务.md`（归档，验证目录隔离）、`Inbox/随手记.md`（跨目录字段缺失）
 
 **1. 任务表（推荐先试这个）**
 
@@ -171,28 +171,22 @@
 
 ---
 
-## 七、验收清单（逐条在面板里跑）
+## 七、功能展示清单（逐条在面板里跑）
 
-| # | 验证点 | 示例 |
+| # | 展示点 | 示例 |
 |---|---|---|
-| 1 | 标准五子句 | 示例 1 |
+| 1 | 标准五子句查询 | 示例 1 |
 | 2 | 省略 SELECT（默认全字段） | 示例 3、5 |
-| 3 | 子句乱序（WHERE 在 SORT 前/后均可） | `**FROM** "Notes" **SORT** priority **DESC** **WHERE** done` |
-| 4 | 前件报错 | `**WHERE** done **FROM** "Notes"` → 报「需要 **FROM** 作为前件」 |
-| 5 | 重复子句报错 | `**FROM** "Notes" **FROM** "Inbox"` |
-| 6 | 出链反查（file.outlinks） | 示例 5（任务B、任务C 出现在结果中） |
-| 7 | 字段缺失不报错 | `**SELECT** status **FROM** "Notes"`（想法/空白 行该列为空） |
-| 8 | 子文件夹递归 | `**SELECT** file.name **FROM** "Notes"` 含「归档任务」 |
-| 9 | 布尔/日期字段 | 示例 6 |
-| 10 | 标签 + contains | 示例 7、示例 2 |
-| 11 | 无 frontmatter 笔记正常入行 | `**SELECT** file.name **FROM** "Notes" **WHERE** status %==% null` 含「空白」 |
-| 12 | 修改笔记属性后结果自动刷新 | 随手改一篇笔记的 status |
-| 13 | 跨目录：兄弟目录互不穿透 | `**FROM** "Projects/Alpha"` 只有 2 行（不含 Beta） |
-| 14 | 跨目录：多组并集 + 父目录递归 | `**FROM** "Projects"` 含 Alpha、Beta 全部 4 篇 |
-| 15 | 跨目录：多级排序分组内排序 | 看板「跨项目总览」（project 分组、组内 priority 降序） |
-| 16 | 跨目录：并/交组合 + 标签 | 看板「项目进度榜」（`(Projects ∪ Archive) ∩ #proj`） |
-| 17 | 跨目录：数值表达式（进度） | 看板「项目进度榜」进度列 = spent %/% estimate |
-| 18 | 跨目录：字段缺失行 | 看板「目录隔离与并集」中 Inbox 行的项目/状态列为空 |
+| 3 | 子句乱序（书写顺序自由，FROM 为 WHERE/SORT/LIMIT 前件） | `**FROM** "Notes" **SORT** priority **DESC** **WHERE** done` |
+| 4 | 出链反查（file.outlinks） | 示例 5（任务B、任务C 出现在结果中） |
+| 5 | 子文件夹递归 | `**SELECT** file.name **FROM** "Notes"` 含「归档任务」 |
+| 6 | 布尔/日期字段 | 示例 6 |
+| 7 | 标签 + contains | 示例 7、示例 2 |
+| 8 | 修改笔记属性后结果自动刷新 | 随手改一篇笔记的 status |
+| 9 | 跨目录：父目录递归 | `**FROM** "Projects"` 含 Alpha、Beta 全部 6 篇 |
+| 10 | 跨目录：多级排序分组内排序 | 看板「跨项目总览」（project 分组、组内 priority 降序） |
+| 11 | 跨目录：数值表达式（进度） | 看板「跨项目总览」优先级列；DSQL 1.3 系列看板 |
+| 12 | 属性编辑 | 见第八节（表格双击 / 列表点击 / ✎ 弹窗） |
 
 ---
 
