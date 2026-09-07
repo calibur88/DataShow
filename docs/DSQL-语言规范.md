@@ -411,22 +411,3 @@ function_call  = **函数名** , "(" , [ expr , { "," , expr } ] , ")" ;
 -- 11. ❌ WHERE 的前件 FROM 未在其之前出现（解析器报错）
 **SELECT** 任务 **WHERE** 状态 %==% '待办' **FROM** #待办
 ```
-
----
-
-## 8. 版本记录
-
-- **v2.0（当前）**：视图关键词统一 `*_VIEW` 后缀，废除旧 `TABLE` / `LIST`：
-  - 视图产生式：`(**TABLE_VIEW** | **LIST_VIEW** | **CARD_VIEW**)?`，缺省 `TABLE_VIEW`；
-  - 旧 `**TABLE**` / `**LIST**` 直接报 `LexError`「未知关键词」（不做兼容）；
-  - 新增 `**CARD_VIEW**`：执行层走同一数据管道，仅渲染不同；
-  - 三个 `*_VIEW` 关键词均可写入 SQL 并持久化到看板定义；
-  - 视图模式持久化字段：`Board.viewType`（重命名自 v1.x 的 `viewOverride`），类型 `ViewType | ""`；`""` 表示跟随 SQL 关键词；
-  - 字符串字面量 `'**TABLE_VIEW**'` 等不参与视图识别（`readMarked` 只在 `**` 包裹的 token 中匹配，天然安全）；
-  - 不兼容：v1.x 写法的 `**TABLE**` / `**LIST**` 需替换为对应 `*_VIEW`；v1.x 看板定义的
-    `viewOverride` 字段名在加载时迁移到 `viewType`，旧值不丢失。
-- **v1.5**：三值语义分家（正常值 / 空容器 / 未赋值）、别名唯一性、frontmatter 摄取容错、NUMBER 词法收窄。
-- **v1.4**：TOTAL 全表聚合 + `$变量$` 派生体系（两遍执行模型）。
-- **v1.3**：子句前件关系、`**SELECT**` 可省略、`**WITHOUT** **ID**` 任意位置、自动列 UTF-8 字节序。
-- **v1.2**：标记语法字面化（`**关键词**` / `%运算符%`）、表达式完备、sqrt / cbrt / root、多级排序。
-- **v1.1**：`**SORT** **BY**` 自定义优先级 + 调试信息规范。
