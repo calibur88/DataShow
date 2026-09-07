@@ -2,10 +2,12 @@
 
 > 本 vault 用于**功能展示与验收**：用 Obsidian 打开并启用 DataShow，即可演示
 > DSQL 查询、表格/列表视图与 frontmatter 属性编辑。
-> 正式版（`data-show`）与草稿版（`datashow-dev`）构建产物都会自动部署到这里，可对照验收。
+> 本 vault 只部署**正式版**（`data-show`）构建产物；草稿版（`datashow-dev`）部署在
+> 它自己的 `../data_show_test/test-vault/`（两个 vault 内容一致，可对照验收）。
 >
 > **DSQL v1.5 标记语法**：关键词用 `**` 包裹（如 `**SELECT**`）、运算符用 `%` 包裹（如 `%==%`）、
-> 字符串用单引号 `'值'`、路径用双引号 `"文件夹"`。完整规范见 `data_show/docs/DSQL-EBNF.md`。
+> 字符串用单引号 `'值'`、路径用双引号 `"文件夹"`。完整规范见
+> [`../../docs/DSQL-EBNF.md`](../../docs/DSQL-EBNF.md)。
 
 ## 示例数据（示例/）
 
@@ -88,6 +90,7 @@
 ```bash
 cd data_show        # 正式版 → 部署到本 vault plugins/data-show/
 npm run build
-cd ../data_show_test  # 草稿版 → 同样部署到本 vault plugins/datashow-dev/
-npm run build && npm test   # 测试五大类：功能 / 数学 / DSQL语言 / store / 摄取层
+
+cd ../data_show_test  # 草稿版 → 部署到它自己的 test-vault plugins/datashow-dev/
+npm run build && npm test   # 测试五套件：功能 / 数学 / DSQL语言 / store / 摄取层
 ```

@@ -43,7 +43,7 @@
 - 函数：`**sqrt** **cbrt** **root** **contains** **length** **lower** **upper** **empty**`
   （`**contains**` 区分大小写，忽略大小写用 `**contains**(**lower**(字段), '值')`）；
 - 排序：多级排序、`**SORT** 字段 **BY** ('值1', '值2')` 自定义优先级；
-- **聚合与派生变量（DSQL 1.4）**：`**TOTAL** 字段 **AS** $总成绩$` 全表聚合（恒忽略 WHERE）；
+- **聚合与派生变量（DSQL 1.4 引入，当前 1.5）**：`**TOTAL** 字段 **AS** $总成绩$` 全表聚合（恒忽略 WHERE）；
   `$变量$` 在 SELECT 中引用（链式派生），派生列只读；仅含 TOTAL 项时输出单行汇总；
   SELECT 别名互不相同，且不得与行字段名冲突（DSQL 1.5 起为致命错误）；
 - **三种「无」互不混淆（DSQL 1.5）**：`0` / `false` 是**正常值**（仅裸真值判断为假，运算照常）；
@@ -69,7 +69,7 @@ versions.json      历史版本记录
 main.js            构建产物
 styles.css         样式
 CHANGELOG.md       更新日志（从简，只写功能更新）
-test-vault/        演示与验收 vault（预置四大类看板：功能/数学/DSQL语言/三值示例；两个工程的构建产物都部署到这里）
+test-vault/        演示与验收 vault（预置四大类看板：功能/数学/DSQL语言/三值示例；仅部署本工程插件 data-show）
 src/
   main.ts          入口：装配各层、注册视图
   types.ts         公共类型（含 DSQL 1.5 EMPTY 哨兵）
