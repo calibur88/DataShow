@@ -1,3 +1,12 @@
+/**
+ * @module ui/views/frontmatter-modal
+ * @description frontmatter 编辑弹窗：官方 API 流水线，索引随之增量更新
+ *
+ * 官方 API（metadataCache 读 → stringifyYaml 展示 →
+ * parseYaml 解析 → fileManager.processFrontMatter 原子写回）。
+ * 保存后索引自动增量更新，看板查询结果随之刷新。
+ */
+
 import { App, Modal, TFile, parseYaml, stringifyYaml } from "obsidian";
 
 /**

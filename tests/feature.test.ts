@@ -1,4 +1,8 @@
-/* 功能示例测试：数据源、排序、LIMIT、调试信息、file.* 虚拟列、this 上下文、跨目录多组数据。 */
+/**
+ * @module tests/feature
+ * @description 功能示例套件：数据源、排序、调试信息、file.* 虚拟列与跨目录多组数据
+ */
+
 import assert from "node:assert/strict";
 import { executeQuery, evaluateExpr } from "@dsql/executor";
 import { parseQuery } from "@dsql/parser";

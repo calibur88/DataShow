@@ -1,4 +1,8 @@
-/* 摄取层测试：frontmatter 重复键剔除、摄取归一（"" / [] → null，未赋值 → EMPTY 值）、摄取警告输出。 */
+/**
+ * @module tests/ingest
+ * @description 摄取层套件：重复键剔除、摄取归一与摄取警告输出
+ */
+
 import assert from "node:assert/strict";
 import { findDuplicateKeys } from "@index/frontmatter";
 import { buildRow } from "@index/row-builder";

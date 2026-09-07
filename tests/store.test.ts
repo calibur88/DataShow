@@ -1,4 +1,8 @@
-/* DataStore 冒烟测试（纯 TS，无 Obsidian 依赖）。 */
+/**
+ * @module tests/store
+ * @description DataStore 套件：增删改查、订阅通知与批量写入
+ */
+
 import assert from "node:assert/strict";
 import { DataStore } from "@index/store";
 import type { DataRow } from "@dsql/types";

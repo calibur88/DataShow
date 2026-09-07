@@ -1,4 +1,8 @@
-/* DSQL 语言示例测试：词法、语法结构、子句前件关系、错误报告。 */
+/**
+ * @module tests/dsql-language
+ * @description DSQL 语言套件：词法、语法结构、子句前件关系与错误路径
+ */
+
 import assert from "node:assert/strict";
 import { executeQuery, evaluateExpr } from "@dsql/executor";
 import { parseQuery, QueryParseError } from "@dsql/parser";

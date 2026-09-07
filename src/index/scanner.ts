@@ -1,3 +1,8 @@
+/**
+ * @module index/scanner
+ * @description 扫描器：metadataCache 全量扫描与增量事件维护行仓库
+ */
+
 import { App, TAbstractFile, TFile, debounce } from "obsidian";
 import { findDuplicateKeys } from "./frontmatter";
 import { buildRow } from "./row-builder";
@@ -45,7 +50,11 @@ export class VaultScanner {
     private store: DataStore,
   ) {}
 
-  /** 注册事件并做首扫。register 由插件提供（保证卸载时清理）。 */
+  /**
+   * 注册事件并做首扫。register 由插件提供（保证卸载时清理）。
+   *
+   * @param register - 事件注册函数（接收 EventRef，由插件统一管理生命周期）
+   */
   start(register: (ref: unknown) => void): void {
     register(this.app.metadataCache.on("resolved", this.onResolved));
     register(this.app.metadataCache.on("changed", this.onCacheChanged));

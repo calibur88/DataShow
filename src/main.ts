@@ -1,11 +1,13 @@
 /**
- * DataShow 1.0 — 插件入口
+ * @module main
+ * @description 插件入口：注册视图、命令与设置页，装配扫描器与行仓库
  *
  * 面向 Obsidian 的元数据看板插件：索引 vault frontmatter 为行仓库，
- * 以 DSQL 查询并渲染为表格/列表视图。模块分层：
- *   index/（数据层：扫描 → 行仓库） · query/（DSQL 语言层） ·
- *   views/（表现层：侧栏 + 看板面板） · settings.ts（看板与设置）
+ * 以 DSQL 查询并渲染为表格/列表/卡片视图。模块分层：
+ *   dsql/（DSQL 语言层） · index/（索引层：扫描 → 行仓库） ·
+ *   ui/（表现层：侧栏 + 看板面板） · settings.ts（看板与设置）
  */
+
 import { Plugin, WorkspaceLeaf } from "obsidian";
 import { VaultScanner } from "@index/scanner";
 import { DataStore } from "@index/store";
@@ -23,6 +25,7 @@ import {
   type PanelViewState,
 } from "@dsql/types";
 
+/** DataShow 插件主类：持有设置与行仓库，装配视图、命令、设置页与索引扫描。 */
 export default class DatashowPlugin extends Plugin {
   settings: DatashowSettings = DEFAULT_SETTINGS;
 
@@ -32,6 +35,7 @@ export default class DatashowPlugin extends Plugin {
   private scanner: VaultScanner | null = null;
   private boardListeners = new Set<() => void>();
 
+  /** 插件加载：读设置、注册视图与命令、启动索引扫描。 */
   async onload(): Promise<void> {
     await this.loadSettings();
 
@@ -55,10 +59,12 @@ export default class DatashowPlugin extends Plugin {
     this.scanner.start((ref) => this.registerEvent(ref as never));
   }
 
+  /** 插件卸载：断开扫描器引用。 */
   onclose(): void {
     this.scanner = null;
   }
 
+  /** 读取并归一设置（boards 逐个校形）。 */
   async loadSettings(): Promise<void> {
     const data = (await this.loadData()) as Partial<DatashowSettings> | null;
     this.settings = {
@@ -70,18 +76,28 @@ export default class DatashowPlugin extends Plugin {
     };
   }
 
+  /** 持久化设置并通知看板订阅者。 */
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
     for (const cb of this.boardListeners) cb();
   }
 
-  /** 订阅看板设置变化（侧栏/面板据此刷新），返回取消订阅函数。 */
+  /**
+   * 订阅看板设置变化（侧栏/面板据此刷新）。
+   *
+   * @param cb - 变更回调（无参）
+   * @returns 取消订阅函数
+   */
   addBoardListener(cb: () => void): () => void {
     this.boardListeners.add(cb);
     return () => this.boardListeners.delete(cb);
   }
 
-  /** 首次安装时的默认看板：名为「默认看板」，内容为空。 */
+  /**
+   * 首次安装时的默认看板。
+   *
+   * @returns 含单个「默认看板」的数组
+   */
   defaultBoards(): BoardDef[] {
     return [makeDefaultBoard()];
   }
@@ -100,7 +116,11 @@ export default class DatashowPlugin extends Plugin {
     await workspace.revealLeaf(leaf);
   }
 
-  /** 在主工作区打开看板面板（新标签页或复用已有面板标签）。 */
+  /**
+   * 在主工作区打开看板面板（新标签页或复用已有面板标签）。
+   *
+   * @param boardId - 目标看板 id
+   */
   async openBoard(boardId: string): Promise<void> {
     const { workspace } = this.app;
     const state: PanelViewState = { boardId };

@@ -1,5 +1,6 @@
 /**
- * DSQL v2.0 分词器。
+ * @module dsql/lexer
+ * @description DSQL v2.0 分词器：**WORD** / %运算符% / 字符串 / 路径 / 裸标识符 / $变量$
  *
  * 标记体系（按字面实现）：
  * - 关键词/内置函数：**WORD** 包裹（关键词约定全大写，函数约定小写）
@@ -30,6 +31,7 @@ export interface Token {
   col: number;
 }
 
+/** 词法错误：携带出错位置的行号与列号。 */
 export class LexError extends Error {
   constructor(
     message: string,
@@ -40,6 +42,7 @@ export class LexError extends Error {
   }
 }
 
+/** 子句关键词全集（词法层校验 **WORD** 用） */
 export const KEYWORDS = new Set([
   "SELECT", "FROM", "WHERE", "SORT", "BY", "AND", "OR", "NOT", "AS",
   "LIMIT", "ASC", "DESC", "TABLE_VIEW", "LIST_VIEW", "CARD_VIEW", "WITHOUT", "ID",
@@ -48,6 +51,7 @@ export const KEYWORDS = new Set([
 /** DSQL 1.4：聚合关键词（仅 SELECT 项合法，parser 单独拦截，不入 KEYWORDS 以免其他子句误吞） */
 export const AGG_KEYWORDS = new Set(["TOTAL"]);
 
+/** 内置函数名表（词法层校验用，函数名约定小写） */
 export const FUNCTIONS = new Set([
   "sqrt", "cbrt", "root", "contains", "length", "lower", "upper", "empty",
 ]);
@@ -62,6 +66,10 @@ const IDENT_START = /[\p{L}_$]/u;
 const IDENT_PART = /[\p{L}\p{N}_$]/u;
 const DIGIT = /[0-9]/;
 
+/**
+ * 分词器：将 DSQL 源文本切分为 token 序列，维护行列号（1 起）。
+ * 遇无法识别的 token 抛 LexError。
+ */
 export class Lexer {
   private pos = 0;
   private line = 1;
@@ -69,6 +77,11 @@ export class Lexer {
 
   constructor(private src: string) {}
 
+  /**
+   * 分词至文件结束。
+   *
+   * @returns token 序列（以 eof 结尾）
+   */
   tokenize(): Token[] {
     const tokens: Token[] = [];
     for (;;) {

@@ -1,3 +1,8 @@
+/**
+ * @module settings
+ * @description 插件设置页：常规设置 + 看板管理（身份信息编辑，DSQL 在面板中编辑）
+ */
+
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type DatashowPlugin from "./main";
 import { IMPLEMENTED_VIEWS, VIEW_LABELS, makeBoardId, type BoardDef, type ViewType } from "@dsql/types";
@@ -18,6 +23,7 @@ export class DatashowSettingTab extends PluginSettingTab {
     this.plugin = plugin;
   }
 
+  /** 渲染设置页（Obsidian 打开设置面板时调用）。 */
   display(): void {
     const { containerEl } = this;
     containerEl.empty();

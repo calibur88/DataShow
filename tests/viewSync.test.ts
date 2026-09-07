@@ -1,5 +1,8 @@
-/* viewSync 工具函数测试：detectTypeFromSql / normalizeSqlView / applyViewType。
-   零 Obsidian 依赖，可直接 node 执行（esbuild 打包）。 */
+/**
+ * @module tests/viewSync
+ * @description viewSync 套件：detectTypeFromSql / normalizeSqlView / applyViewType 边界用例
+ */
+
 import assert from "node:assert/strict";
 import { makeBoardId } from "@dsql/types";
 import { applyViewType, detectTypeFromSql, normalizeSqlView } from "@ui/utils/viewSync";

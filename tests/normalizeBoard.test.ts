@@ -1,4 +1,8 @@
-/* normalizeBoard 字段校形测试：viewType 优先级、viewOverride 兼容、type 自由保留。 */
+/**
+ * @module tests/normalizeBoard
+ * @description normalizeBoard 套件：viewType 优先级、viewOverride 兼容与字段校形
+ */
+
 import assert from "node:assert/strict";
 import { isViewType, normalizeBoard } from "@dsql/types";
 

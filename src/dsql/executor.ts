@@ -1,11 +1,13 @@
 /**
- * DSQL v2.0 执行器。
+ * @module dsql/executor
+ * @description DSQL 执行器：按 FROM → WHERE → SORT → LIMIT → SELECT 管线执行查询
  *
  * 两遍执行模型：第一遍聚合遍（FROM 全量命中行，**忽略 WHERE**，计算 **TOTAL** → 变量表）；
  * 第二遍投影遍（WHERE → SORT → LIMIT → SELECT 投影，$变量$ 查变量表、裸标识符查行字段）。
  * 语义：类型不匹配/除零/缺字段为非致命（求值 null，计入 warnings）；排序 UTF-8 字节序确定性方案。
  * 视图关键词仅透传 ResultSet.view，不影响数据管线（v2.0：TABLE_VIEW / LIST_VIEW / CARD_VIEW）。
  */
+
 import type { BinOp, Expr, Query, Source } from "./ast";
 import { callFunction } from "./functions";
 import { EMPTY, type DataRow, type FieldValue, type ViewType } from "@dsql/types";
@@ -62,6 +64,12 @@ export interface ExecuteOptions {
 
 /**
  * 执行查询。ctx 为 this 上下文（当前笔记行，看板面板场景为 null）。
+ *
+ * @param q - 解析后的查询 AST
+ * @param rows - 全部候选行（FROM 匹配在其中进行）
+ * @param ctx - this 上下文行；无上下文时传 null
+ * @param opts - 可选项（debug 调试开关、ingestWarnings 摄取警告）
+ * @returns 结果集（列 + 行 + 全局变量表，开启 debug 时附带调试信息）
  */
 export function executeQuery(
   q: Query,
@@ -241,7 +249,17 @@ function stripEmpty(v: FieldValue): FieldValue {
   return v === EMPTY ? null : v;
 }
 
-/** 求值表达式（面板渲染单元格与执行器共用）。类型不匹配等非致命 → null。 */
+/**
+ * 求值表达式（面板渲染单元格与执行器共用）。类型不匹配等非致命 → null。
+ *
+ * @param expr - 表达式 AST
+ * @param row - 当前行
+ * @param ctx - this 上下文行（无则 null）
+ * @param track - 可选字段访问追踪器（调试：记录字段缺失）
+ * @param warn - 可选警告接收器（调试：类型不匹配等）
+ * @param vars - 可选变量表（$变量$ 取值）
+ * @returns 求值结果；非致命错误返回 null
+ */
 export function evaluateExpr(
   expr: Expr,
   row: DataRow,
@@ -353,7 +371,14 @@ function stringValue(v: FieldValue): string {
   return String(v);
 }
 
-/** 字段解析：file.* → 文件元数据；this.* → 上下文行；其余 → frontmatter 字段。 */
+/**
+ * 字段解析：file.* → 文件元数据；this.* → 上下文行；其余 → frontmatter 字段。
+ *
+ * @param row - 当前行
+ * @param path - 字段路径（可含点）
+ * @param ctx - this 上下文行（无则 null）
+ * @returns 字段值；路径不存在返回 null
+ */
 export function resolveField(row: DataRow, path: string, ctx: DataRow | null): FieldValue {
   if (path.startsWith("this.")) {
     if (!ctx) return null;
@@ -379,6 +404,9 @@ function resolveOn(row: DataRow, path: string): FieldValue {
 
 /**
  * 裸真值判断（DSQL 1.5 三值语义）：empty 值、null、0、false、空串、空数组 → 假；其余一切值为真。
+ *
+ * @param v - 待判断的值
+ * @returns 真值判定结果
  */
 export function truthy(v: FieldValue): boolean {
   return (
@@ -408,6 +436,10 @@ const utf8Encoder = new TextEncoder();
 /**
  * UTF-8 字节序比较（确定性排序）：逐字节比较，公共前缀相等则继续向后比较
  * （递归下降），短字符串在前。例：你好AAAA < 你好AAAB；"a" < "你"（0x61 < 0xE4）。
+ *
+ * @param a - 左侧字符串
+ * @param b - 右侧字符串
+ * @returns 负数（a 在前）/ 0（相等）/ 正数（b 在前）
  */
 export function compareUtf8(a: string, b: string): number {
   const ba = utf8Encoder.encode(a);

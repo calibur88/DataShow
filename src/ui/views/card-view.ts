@@ -1,5 +1,6 @@
 /**
- * 卡片视图（v2.0，DSQL CARD_VIEW）—— Kanban 看板布局，独占内联编辑。
+ * @module ui/views/card-view
+ * @description 卡片视图（DSQL CARD_VIEW）：Kanban 看板布局，独占内联编辑
  *
  * 行为：
  * - 按「分组列」的取值拆分成若干列（Kanban 列），每列纵向堆叠卡片
@@ -14,6 +15,7 @@
  * 该字段可编辑。其余情况（含别名 AS 派生、TOTAL 聚合、变量引用、函数调用、
  * 算术/比较表达式）一律只读。
  */
+
 import { evaluateExpr, type ResultSet } from "@dsql/executor";
 import type { DataRow, FieldValue } from "@dsql/types";
 
@@ -32,6 +34,12 @@ const COLUMN_COLORS = [
   "#c678dd", "#56b6c2", "#e5c07b", "#61afef",
 ];
 
+/**
+ * 渲染卡片视图：按分组列取值拆列，卡片逐字段展示，裸字段可内联编辑。
+ *
+ * @param args - 视图参数（结果集、小数位、字段保存回调、打开笔记回调）
+ * @returns 看板根元素
+ */
 export function renderCardView(args: CardViewArgs): HTMLElement {
   const { result, decimalPlaces, onSaveField, onOpenFile } = args;
   const wrap = document.createElement("div");

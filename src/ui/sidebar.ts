@@ -1,3 +1,8 @@
+/**
+ * @module ui/sidebar
+ * @description 看板侧栏：按分类分组展示看板清单，点击在主工作区打开面板
+ */
+
 import { ItemView, WorkspaceLeaf } from "obsidian";
 import type DatashowPlugin from "../main";
 import { SIDEBAR_VIEW_TYPE } from "@dsql/types";
@@ -26,6 +31,7 @@ export class DatashowSidebarView extends ItemView {
     return "layout-dashboard";
   }
 
+  /** 打开侧栏：渲染看板清单并订阅看板变化。 */
   async onOpen(): Promise<void> {
     this.render();
     // 设置中的看板变化时刷新。
@@ -34,6 +40,7 @@ export class DatashowSidebarView extends ItemView {
     });
   }
 
+  /** 关闭侧栏：退订并清空 DOM。 */
   async onClose(): Promise<void> {
     this.unsubBoards?.();
     this.contentEl.empty();

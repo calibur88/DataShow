@@ -1,4 +1,8 @@
-/* 数学示例测试：算术运算、乘方、比较、字符串连接、内置函数、非致命语义、UTF-8 字节序。 */
+/**
+ * @module tests/math
+ * @description 数学示例套件：算术、比较、连接、内置函数与 TOTAL 聚合
+ */
+
 import assert from "node:assert/strict";
 import { compareUtf8, evaluateExpr, executeQuery } from "@dsql/executor";
 import { EMPTY, type FieldValue } from "@dsql/types";

@@ -1,4 +1,4 @@
-/** 用 esbuild 打包测试入口后交给 node 执行（query / index / utils 层零 Obsidian 依赖）。 */
+/** 用 esbuild 打包测试入口后交给 node 执行（dsql / index / ui-utils 层零 Obsidian 依赖）。 */
 import esbuild from "esbuild";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";

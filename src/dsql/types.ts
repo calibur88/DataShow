@@ -1,4 +1,7 @@
-/** 全局共享类型与常量（唯一类型出口）。 */
+/**
+ * @module dsql/types
+ * @description 全局共享类型与常量（唯一类型出口）：数据模型、看板定义与校形
+ */
 
 export const SIDEBAR_VIEW_TYPE = "datashow-sidebar-view";
 export const PANEL_VIEW_TYPE = "datashow-panel-view";
@@ -10,7 +13,12 @@ export const PANEL_VIEW_TYPE = "datashow-panel-view";
  */
 export type ViewType = "TABLE_VIEW" | "LIST_VIEW" | "CARD_VIEW";
 
-/** 视图类型守卫 */
+/**
+ * 视图类型守卫。
+ *
+ * @param v - 待检查的值
+ * @returns 值为三个合法视图类型之一时返回 true
+ */
 export function isViewType(v: unknown): v is ViewType {
   return v === "TABLE_VIEW" || v === "LIST_VIEW" || v === "CARD_VIEW";
 }
@@ -61,13 +69,22 @@ export interface DatashowSettings {
   boards: BoardDef[];
 }
 
+/**
+ * 生成看板唯一 ID。
+ *
+ * @returns 优先 crypto.randomUUID；不支持的环境退化为时间戳 + 随机串
+ */
 export function makeBoardId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
     : `board-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** 首次安装时的默认看板：名为「默认看板」，内容为空。 */
+/**
+ * 首次安装时的默认看板：名为「默认看板」，内容为空。
+ *
+ * @returns 空白看板定义
+ */
 export function makeDefaultBoard(): BoardDef {
   return {
     id: makeBoardId(),
@@ -134,6 +151,9 @@ export const EMPTY = Symbol("DSQL:empty") as unknown as FieldValue;
  *   3. 两者均非法/空 → ""
  *
  * `type` 字段不校验——保持自由分类语义（与 ViewType 解耦）。
+ *
+ * @param raw - 载入的原始看板字段（data.json 中未经校验的数据）
+ * @returns 校形后的看板定义
  */
 export function normalizeBoard(raw: Record<string, unknown>): BoardDef {
   const viewTypeRaw = typeof raw.viewType === "string" ? raw.viewType : "";

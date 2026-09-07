@@ -1,3 +1,8 @@
+/**
+ * @module ui/panel
+ * @description 主工作区看板面板：DSQL 编辑 + 查询执行 + 三视图结果区分派
+ */
+
 import { ItemView, WorkspaceLeaf, TFile } from "obsidian";
 import type DatashowPlugin from "../main";
 import { executeQuery, type QueryDebug, type ResultSet } from "@dsql/executor";
@@ -74,12 +79,14 @@ export class DatashowPanelView extends ItemView {
     if (this.contentEl.isShown()) await this.render();
   }
 
+  /** 打开面板：订阅数据与看板变更，并首次渲染。 */
   async onOpen(): Promise<void> {
     this.unsubBoards = this.plugin.addBoardListener(() => this.onExternalChange());
     this.unsubStore = this.plugin.store.subscribe(() => this.renderResult());
     if (this.state) await this.render();
   }
 
+  /** 关闭面板：落盘防抖保存并退订。 */
   async onClose(): Promise<void> {
     this.flushSave();
     this.unsubBoards?.();

@@ -1,3 +1,8 @@
+/**
+ * @module index/row-builder
+ * @description 行构造：metadataCache 解析结果 → DataRow（含摄取归一规则）
+ */
+
 import type { TFile } from "obsidian";
 import { EMPTY, type DataRow, type FieldValue } from "@dsql/types";
 
@@ -9,6 +14,12 @@ import { EMPTY, type DataRow, type FieldValue } from "@dsql/types";
  * - 键存在但值为 null/undefined（`字段:`，受限近似含 `字段: null` / `~`，见规范 §3 受限标注 ①）→ EMPTY 哨兵；
  * - `字段: ""` / `字段: []`（空容器）→ null；
  * - 缺失键不入 fields（查询求值 null，不是 empty 值）。
+ *
+ * @param file - Obsidian 文件对象
+ * @param frontmatter - metadataCache 解析的 frontmatter（可为 null/undefined）
+ * @param outlinks - 已解析的出链目标路径列表
+ * @param inlinks - 入链来源路径列表
+ * @returns 可供 DSQL 查询的行（file.* 虚拟列 + frontmatter 字段）
  */
 export function buildRow(
   file: TFile,

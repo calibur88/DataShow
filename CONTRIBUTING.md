@@ -51,7 +51,7 @@ npm run build   # 类型检查 + 生产构建
 2. `npm test` + `npm run build` 通过后，用 Obsidian 打开 `test-vault-local/` 实际验收；
 3. 验收通过后更新 CHANGELOG 与相关文档，再提交 git。
 
-> 验证看板 SQL 不能直接用 `node` 跑 TS：`src/query/parser.ts` 用了参数属性，
+> 验证看板 SQL 不能直接用 `node` 跑 TS：`src/dsql/parser.ts` 用了参数属性，
 > 必须经 esbuild 打包（见 `scripts/test.mjs`）。
 
 ## 5. 文档更新规范（变更时必须同步的清单）
@@ -122,19 +122,95 @@ npm run build   # 类型检查 + 生产构建
 
 ## 7. 代码编写规范
 
-- **类型出口唯一**：共享类型与常量统一定义在 `src/types.ts`，禁止各文件散落重复定义；
-- **`src/query/` 零 Obsidian 依赖**：不 import `obsidian`，保证可在 Node 独立测试；
+- **类型出口唯一**：共享类型与常量统一定义在 `src/dsql/types.ts`，禁止各文件散落重复定义；
+- **`src/dsql/` 零 Obsidian 依赖**：不 import `obsidian`，保证可在 Node 独立测试；
   该目录的词法 / 语法 / 执行逻辑改动必须同步 [docs/DSQL-语言规范.md](docs/DSQL-语言规范.md) 与测试；
-- **视图组件为纯 TS 工厂函数**：`src/views/*-view.ts` 导出 `renderXxxView(...): HTMLElement`，
-  不引入前端框架（无 Svelte / React）；新视图类型在 `panel.ts` 的 `renderResultByView` 分派；
-- **归一 / 校形**：看板字段校形在 `normalizeBoard`（`src/types.ts`）完成；
-  视图双向同步工具在 `src/utils/viewSync.ts`（纯函数，可独立测试）；
+- **视图组件为纯 TS 工厂函数**：`src/ui/views/*-view.ts` 导出 `renderXxxView(...): HTMLElement`，
+  不引入前端框架（无 Svelte / React）；新视图类型在 `src/ui/panel.ts` 的 `renderResultByView` 分派；
+- **归一 / 校形**：看板字段校形在 `normalizeBoard`（`src/dsql/types.ts`）完成；
+  视图双向同步工具在 `src/ui/utils/viewSync.ts`（纯函数，可独立测试）；
 - **非致命语义**：类型不匹配、除零、字段缺失等运行期问题一律求值为 null 并计入 `warnings`，
   不中断查询；只有词法 / 语法错误才是致命错误；
 - **注释与文档用中文**；代码语法字符（引号、路径、键名）用 ASCII 直引号；
   注释保持技术说明风格（用途、参数、边界条件），不写过程性叙事。
 
-## 8. 测试规范
+## 8. 注释规范
+
+注释的目的是解释 **"为什么"** ，而不是"是什么"。好代码本身应自解释其"是什么"和"怎么做"。
+
+### 8.1 注释类型与使用场景
+
+| 注释类型 | 语法 | 使用场景 |
+| :--- | :--- | :--- |
+| **文件头** | `/** ... */` | 每个 `.ts` 文件顶部，说明模块职责 |
+| **函数注释** | `/** ... */` | 所有导出函数、类方法（公开 API） |
+| **行内注释** | `//` | 解释复杂逻辑、边界条件、临时方案 |
+| **TODO/FIXME** | `// TODO:` / `// FIXME:` | 标记待办事项或已知问题 |
+| **警示注释** | `// ⚠️` | 标记容易误用的 API 或危险操作 |
+
+### 8.2 格式规范
+
+**文件头（必须）：**
+
+```typescript
+/**
+ * @module dsql/executor
+ * @description DSQL 执行器，按 FROM → WHERE → SORT → LIMIT → SELECT 管线执行查询
+ */
+```
+
+**函数注释（导出函数必须）：**
+
+````typescript
+/**
+ * 对卡片视图应用搜索过滤
+ *
+ * @param container - 卡片视图的根容器元素
+ * @param keyword - 搜索关键词（已 trim，非空）
+ * @returns 匹配的卡片数量
+ *
+ * @example
+ * ```ts
+ * const matched = applyCardFilter(container, '待办');
+ * ```
+ */
+export function applyCardFilter(container: HTMLElement, keyword: string): number {
+  // ...
+}
+````
+
+**必须包含：** `@param` 描述每个参数，`@returns` 描述返回值
+**可选包含：** `@example` 使用示例
+
+**行内注释：**
+
+```typescript
+// ✅ 好：解释"为什么"
+// empty 值需要特殊处理，因为它是"键存在但未赋值"的状态
+
+// ❌ 坏：重复代码本身
+// 将 card 的 display 设为 none
+card.style.display = 'none';
+```
+
+### 8.3 绝对禁止的注释类型
+
+| 禁止类型 | ❌ 错误示例 |
+| :--- | :--- |
+| 重构说明 | `// 重构：将 query 目录重命名为 dsql` |
+| 优化说明 | `// 优化：拆分双目录为单目录` |
+| 迁移说明 | `// 从 data_show_test 迁移而来` |
+| 变更日志 | `// 2026-09-07: 新增搜索功能` |
+| 个人署名 | `// @author calibur88` |
+| 注释掉的代码 | `// if (oldView === 'TABLE') { ... }` |
+
+### 8.4 语言要求
+
+- **注释正文使用中文**
+- **代码中的语法字符使用 ASCII 直引号**
+- **中文与英文/数字之间不加空格**
+
+## 9. 测试规范
 
 - 测试套件位于 `tests/`，新套件必须**手动注册到 `tests/all.ts`**
   （项目用自定义 `scripts/test.mjs` + 显式 import，非 vitest / jest 自动扫描）；
@@ -142,7 +218,7 @@ npm run build   # 类型检查 + 生产构建
 - 语法 / 语义变更必须同步新增或修改 `dsql-language.test.ts` 用例（含错误路径与边界）；
 - 提交前 `npm test` 全绿；测试例数变化（如「80 → 106」）同步到 README 与 ARCHITECTURE。
 
-## 9. git 提交规范
+## 10. git 提交规范
 
 - **提交信息用中文**，标题一句概括（如「DSQL v2.0：视图三关键词 + 卡片看板视图」），
   正文以要点列出关键变更；
@@ -151,17 +227,17 @@ npm run build   # 类型检查 + 生产构建
 - 本地测试库 `test-vault-local/` 已由 `.gitignore` 排除，不得入库；
 - 推送到 `origin/master`；若 push 卡在凭据弹窗，用 `GIT_TERMINAL_PROMPT=0 git push` 走缓存凭据。
 
-## 10. Git 同步与提交流程
+## 11. Git 同步与提交流程
 
 **核心原则：未经用户明确许可，不得执行任何 `git add`、`git commit` 或 `git push` 操作。**
 
-### 10.1 本地开发阶段
+### 11.1 本地开发阶段
 
 - 所有变更仅保留在工作区，AI 不得主动暂存或提交；
 - 构建产物（`dist/`、同步到两个测试库的部署副本）由 `.gitignore` 排除，**不入库**；
 - 本地测试库 `test-vault-local/` 已由 `.gitignore` 排除，**不入库**。
 
-### 10.2 验收前置条件
+### 11.2 验收前置条件
 
 - 代码与文档变更完成后，**必须先在 Obsidian 中打开 `test-vault-local/` 实际验收**：
   - 看板列表正常加载；
@@ -170,7 +246,7 @@ npm run build   # 类型检查 + 生产构建
   - 卡片视图内联编辑可保存并刷新；
 - 验收通过后，由**用户明确告知「可以推送」**，才允许执行 Git 提交操作。
 
-### 10.3 提交流程
+### 11.3 提交流程
 
 ```bash
 # 1. 用户确认“可以推送”后，检查当前变更
@@ -184,14 +260,14 @@ git commit -m "<中文标题>：<概要描述>"
 git push origin master
 ```
 
-### 10.4 提交信息规范
+### 11.4 提交信息规范
 
 - **标题**：一句中文概括，如「DSQL v2.0：视图三关键词 + 卡片看板视图」；
 - **正文**：以要点列出关键变更，体例与 CHANGELOG 条目一致（`**加粗标题**：简述` 形式）；
 - **禁止提交的内容**：`dist/`、`test-vault-local/`、`*.log`、`node_modules/`；
 - **必须提交的内容**：`data.json`（看板定义）、`src/` 源码、`tests/` 测试、根目录文档。
 
-### 10.5 推送到 GitHub
+### 11.5 推送到 GitHub
 
 若 push 卡在凭据弹窗，执行以下命令走缓存凭据：
 
@@ -199,7 +275,7 @@ git push origin master
 GIT_TERMINAL_PROMPT=0 git push
 ```
 
-## 11. 本地测试与恢复
+## 12. 本地测试与恢复
 
 - 测试时面板操作（切换视图 / 编辑 SQL）会把 `viewType` 的空值反向同步成显式值，
   这是预期行为，会污染 `test-vault-local/.obsidian/plugins/data-show/data.json`；

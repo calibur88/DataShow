@@ -1,5 +1,6 @@
 /**
- * frontmatter 原文摄取检查（纯函数，零 Obsidian 依赖）。
+ * @module index/frontmatter
+ * @description frontmatter 原文摄取检查（纯函数，零 Obsidian 依赖）
  *
  * DSQL 1.5 摄取容错：Obsidian metadataCache 解析后重复键已被折叠为「后值覆盖前值」，
  * 丢失了重复信息，因此重复键检测基于自扫描 frontmatter 原文的顶层键
@@ -13,7 +14,12 @@ export interface DuplicateKeyFinding {
   rawLines: string[];
 }
 
-/** 扫描 frontmatter 原文，返回所有重复顶层键（无重复时为空数组）。 */
+/**
+ * 扫描 frontmatter 原文，返回所有重复顶层键。
+ *
+ * @param text - 笔记全文（至少含 frontmatter 块的原文）
+ * @returns 重复键清单（无重复时为空数组）
+ */
 export function findDuplicateKeys(text: string): DuplicateKeyFinding[] {
   const lines = text.split(/\r?\n/);
   if (lines[0]?.trim() !== "---") return [];

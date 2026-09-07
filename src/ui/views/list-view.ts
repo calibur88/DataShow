@@ -1,5 +1,6 @@
 /**
- * 列表视图（v2.0，DSQL LIST_VIEW）—— 只读，参考 Obsidian Bases 风格。
+ * @module ui/views/list-view
+ * @description 列表视图（DSQL LIST_VIEW）：主行 + 缩进派生子行，只读
  *
  * 每行展示：
  *   - 顶部主行：文件名（点击打开笔记）+ 标题性派生列（如 状态 / 负责人）
@@ -8,6 +9,7 @@
  * v2.0 改动：删除原"点击条目打开 frontmatter 弹窗"的内联编辑语义，
  * 改为"点击文件名/行 → 打开笔记"，与 TableView / CardView 行为一致。
  */
+
 import { evaluateExpr, type ResultSet } from "@dsql/executor";
 import type { DataRow } from "@dsql/types";
 
@@ -17,6 +19,12 @@ export interface ListViewArgs {
   onOpenFile: (row: DataRow) => void;
 }
 
+/**
+ * 渲染列表视图。
+ *
+ * @param args - 视图参数（结果集、小数位、打开笔记回调）
+ * @returns 列表根元素
+ */
 export function renderListView(args: ListViewArgs): HTMLElement {
   const { result, decimalPlaces, onOpenFile } = args;
   const wrap = document.createElement("div");

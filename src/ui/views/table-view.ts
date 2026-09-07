@@ -1,9 +1,11 @@
 /**
- * 表格视图（v2.0，DSQL TABLE_VIEW）—— 只读，点击行跳转原文。
+ * @module ui/views/table-view
+ * @description 表格视图（DSQL TABLE_VIEW）：只读表格，点击行打开笔记
  *
  * 不再做内联编辑（v2.0 把编辑权下放给 CardView 独占）；
  * 也不再有"点击条目打开属性弹窗"——行级 click 负责打开笔记。
  */
+
 import { evaluateExpr, type ResultSet } from "@dsql/executor";
 import type { DataRow } from "@dsql/types";
 
@@ -17,6 +19,12 @@ export interface TableViewArgs {
   onOpenFile: (row: DataRow) => void;
 }
 
+/**
+ * 渲染表格视图。
+ *
+ * @param args - 视图参数（结果集、WITHOUT ID、小数位、打开笔记回调）
+ * @returns 表格根元素
+ */
 export function renderTableView(args: TableViewArgs): HTMLElement {
   const { result, withoutId, decimalPlaces, onOpenFile } = args;
   const wrap = document.createElement("div");

@@ -1,18 +1,20 @@
 /**
- * 视图类型与 SQL 双向同步工具（DSQL v2.0，零 Obsidian 依赖）。
+ * @module ui/utils/viewSync
+ * @description 视图类型与 SQL 双向同步工具（纯函数，零 Obsidian 依赖）
  *
  * 三个工具的职责：
  * - detectTypeFromSql(sql)：识别 SQL 开头（跳过前导空白 + `--` 注释行）。
  *   命中合法视图关键词 → 返回对应 ViewType；未命中 → 返回 null（调用方按 R3 语义降级）。
  * - normalizeSqlView(sql, type)：纯函数，把 SQL 开头视图关键词强制对齐为 type。
  *   有则替换（包括旧 **TABLE** / **LIST** 词串），无则在前导空白/注释行之后注入。
- * - applyViewType(board, newType)：就地把 board.sql 与 board.viewType 同步到 newType。
+ * - applyViewType(board, newType)：就地将 board.sql 与 board.viewType 同步到 newType。
  *
  * 关键边界：
  * - 空 SQL / 纯空白 / 仅注释 → detect 返回 null；normalize 注入 "**TABLE_VIEW**\n"
  * - 字符串字面量 '**TABLE_VIEW**' 不参与关键词识别（readMarked 只在 ** 包裹的 token 中匹配）
  * - 注入位置：前导空白/注释行**之后**第一个 ** 之前（保证首 token 仍是视图关键词）
  */
+
 import type { BoardDef, ViewType } from "@dsql/types";
 
 const VIEW_KEYWORDS: ViewType[] = ["TABLE_VIEW", "LIST_VIEW", "CARD_VIEW"];
@@ -62,6 +64,9 @@ function findInjectionPoint(sql: string): number {
  * - 命中 TABLE_VIEW / LIST_VIEW / CARD_VIEW → 返回对应 ViewType
  * - 空 SQL / 纯空白 / 仅注释 / 无关键词 → 返回 null（R1）
  * - 旧 **TABLE** / **LIST** → 也返回 null（解析器负责抛 LexError，本函数不做兼容）
+ *
+ * @param sql - 看板 SQL 文本
+ * @returns 识别到的视图类型；无法识别（含旧关键词）时为 null
  */
 export function detectTypeFromSql(sql: string): ViewType | null {
   if (typeof sql !== "string" || sql.length === 0) return null;
@@ -88,6 +93,10 @@ export function detectTypeFromSql(sql: string): ViewType | null {
  *   normalizeSqlView("**SELECT** ...", "LIST_VIEW") → "**LIST_VIEW** **SELECT** ..."
  *   normalizeSqlView("-- 注释\n**SELECT** ...", "CARD_VIEW") → "-- 注释\n**CARD_VIEW** **SELECT** ..."
  *   normalizeSqlView("", "TABLE_VIEW") → "**TABLE_VIEW**\n"
+ *
+ * @param sql - 原始 SQL 文本
+ * @param type - 目标视图类型
+ * @returns 对齐或注入视图关键词后的新 SQL 文本（纯函数，不改原串）
  */
 export function normalizeSqlView(sql: string, type: ViewType): string {
   if (typeof sql !== "string") sql = "";
@@ -105,6 +114,9 @@ export function normalizeSqlView(sql: string, type: ViewType): string {
 /**
  * 就地修改 board：把 board.sql 与 board.viewType 同步到 newType。
  * 不会触发 saveSettings——由调用方负责持久化。
+ *
+ * @param board - 目标看板定义（就地修改）
+ * @param newType - 新视图类型
  */
 export function applyViewType(board: BoardDef, newType: ViewType): void {
   board.sql = normalizeSqlView(board.sql, newType);

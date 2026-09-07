@@ -1,4 +1,7 @@
-/** DSQL v2.0 AST。 */
+/**
+ * @module dsql/ast
+ * @description DSQL v2.0 AST：表达式、数据源、排序子句与查询结构的类型定义
+ */
 
 import type { ViewType } from "@dsql/types";
 

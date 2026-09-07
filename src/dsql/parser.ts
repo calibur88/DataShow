@@ -1,5 +1,6 @@
 /**
- * DSQL v2.0 解析器（递归下降）。
+ * @module dsql/parser
+ * @description DSQL v2.0 解析器（递归下降）：子句前件校验、SELECT 列表与表达式优先级
  *
  * 子句按前件关系解析：各子句至多出现一次，书写顺序不限；
  * WHERE / SORT / LIMIT 以 **FROM** 为前件（必须在其之后），SELECT 可省略（默认全部字段）。
@@ -8,10 +9,12 @@
  * v2.0 view 产生式：（**TABLE_VIEW** | **LIST_VIEW** | **CARD_VIEW**）?（缺省 TABLE_VIEW）
  * 旧 **TABLE** / **LIST** 已被词法器废除，落到"未知关键词"分支抛 LexError。
  */
+
 import type { BinOp, ColumnSel, Expr, Query, SortClause, SortKey, Source } from "./ast";
 import { FUNCTIONS, KEYWORDS, Lexer, type Token } from "./lexer";
 import type { FieldValue, ViewType } from "@dsql/types";
 
+/** 查询解析错误：message 已格式化为「[DSQL] 第 x 行第 y 列：原因」。 */
 export class QueryParseError extends Error {
   constructor(
     message: string,
@@ -22,7 +25,13 @@ export class QueryParseError extends Error {
   }
 }
 
-/** 解析 DSQL v1.2 源文本 → AST。错误带行列号。 */
+/**
+ * 解析 DSQL 源文本 → AST。
+ *
+ * @param source - DSQL 源文本
+ * @returns 查询 AST
+ * @throws QueryParseError 语法错误（带行列号）
+ */
 export function parseQuery(source: string): Query {
   return new Parser(new Lexer(source).tokenize()).parseQuery();
 }
