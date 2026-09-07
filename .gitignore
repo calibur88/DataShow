@@ -1,20 +1,16 @@
 # 依赖
 node_modules/
 
-# 构建产物（npm run build 生成并自动同步到 test-vault）
-data_show/main.js
-data_show_test/main.js
+# 构建产物（npm run build 生成并自动同步到两个测试库）
+dist/
+main.js
+.test-out.cjs
 
-# test-vault 插件部署副本：只跟踪看板定义 data.json（核心资产，含全部 DSQL），
-# 其余（main.js / manifest.json / styles.css）为构建自动同步的产物，不入库
-data_show*/test-vault/.obsidian/plugins/*/main.js
-data_show*/test-vault/.obsidian/plugins/*/manifest.json
-data_show*/test-vault/.obsidian/plugins/*/styles.css
-data_show*/test-vault/.obsidian/plugins/*/*.map
+# 本地测试库：日常在 Obsidian 中验收，测试产生的改动不入库
+test-vault-local/
 
 # Obsidian 本地工作区状态
 *.workspace.json
-data_show*/test-vault/.obsidian/workspace*.json
 
 # AI 会话本地文件
 .zcode/

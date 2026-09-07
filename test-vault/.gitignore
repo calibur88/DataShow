@@ -1,0 +1,17 @@
+# 插件构建产物：由根目录 esbuild.config.mjs 自动同步，不入库
+plugins/*/main.js
+plugins/*/manifest.json
+plugins/*/styles.css
+plugins/*/*.map
+
+# 同上（相对 vault 根目录的精确路径形式）
+.obsidian/plugins/*/main.js
+.obsidian/plugins/*/manifest.json
+.obsidian/plugins/*/styles.css
+.obsidian/plugins/*/*.map
+
+# Obsidian 本地工作区状态
+.obsidian/workspace*.json
+workspace*.json
+
+# 保留：data.json（看板定义，核心资产）与 示例/ 下的示例笔记
