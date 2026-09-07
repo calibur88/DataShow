@@ -1,7 +1,7 @@
 # DataShow API 文档
 
 分两部分：**官方 API**（Obsidian 提供、本插件用到的接口）与**插件 API**（DataShow 自身导出、
-可供二次开发 / 测试使用的接口）。示例均基于当前版本（插件 2.1.0，DSQL 2.0，minAppVersion 1.4.4）。
+可供二次开发 / 测试使用的接口）。示例均基于当前版本（插件 2.1.1，DSQL 2.0，minAppVersion 1.4.4）。
 
 ---
 
@@ -18,8 +18,8 @@
 | `parseYaml(text)` | `string → any` | YAML 文本 → 对象（保存前校验，失败抛错） |
 | `app.fileManager.processFrontMatter(file, fn)` | `(TFile, (fm: any) => void) → Promise<void>` | **官方原子写回**：读-改-写 frontmatter，不碰正文 |
 
-插件内写入点（`src/views/panel.ts` 装配保存回调 → `src/views/card-view.ts` 内联编辑触发；
-`src/views/frontmatter-modal.ts` 属性弹窗）：
+插件内写入点（`src/ui/panel.ts` 装配保存回调 → `src/ui/views/card-view.ts` 内联编辑触发；
+`src/ui/views/frontmatter-modal.ts` 属性弹窗）：
 
 ```ts
 await app.fileManager.processFrontMatter(file, (fm) => {
@@ -52,11 +52,11 @@ await app.fileManager.processFrontMatter(file, (fm) => {
 
 ## 二、插件 API（DataShow 自身）
 
-### 1. DSQL 查询层（`src/query/`，零 Obsidian 依赖，可直接在 Node 测试）
+### 1. DSQL 查询层（`src/dsql/`，零 Obsidian 依赖，可直接在 Node 测试）
 
 ```ts
-import { parseQuery, QueryParseError } from "./src/query/parser";
-import { executeQuery, evaluateExpr, compareUtf8 } from "./src/query/executor";
+import { parseQuery, QueryParseError } from "./src/dsql/parser";
+import { executeQuery, evaluateExpr, compareUtf8 } from "./src/dsql/executor";
 ```
 
 | 导出 | 签名 | 说明 |
@@ -66,7 +66,7 @@ import { executeQuery, evaluateExpr, compareUtf8 } from "./src/query/executor";
 | `evaluateExpr(expr, row, ctx, track?, warn?, vars?)` | `→ FieldValue` | 单表达式求值（面板渲染单元格共用） |
 | `truthy(v)` | `FieldValue → boolean` | 裸真值判断（empty 值 / null / 0 / false / 空串 / 空数组 → 假） |
 | `compareUtf8(a, b)` | `(string, string) → number` | UTF-8 字节序比较（排序 / 自动列的确定性基准） |
-| `EMPTY` | `FieldValue`（symbol 哨兵） | DSQL 未赋值哨兵（`src/types.ts`）；仅 `**empty**()` 能识别，其余运算按 null 传播 |
+| `EMPTY` | `FieldValue`（symbol 哨兵） | DSQL 未赋值哨兵（`src/dsql/types.ts`）；仅 `**empty**()` 能识别，其余运算按 null 传播 |
 | `ResultSet` | `{ view, columns, rows, globals, debug? }` | `view: ViewType`；`columns: { alias, expr }[]`；`debug` 见下 |
 | `QueryWarning` | `{ type, message }` | 结构化警告（除零 / 类型不匹配 / 未知函数 / TOTAL / SORT / duplicateKey 等） |
 
@@ -83,7 +83,7 @@ store.setIngestWarnings(path, warns);    // 归档某文件摄取警告（空数
 store.ingestWarnings(): IngestWarning[]; // 全库摄取警告（随查询调试信息输出）
 ```
 
-`DataRow = { path, file: FileMeta, fields: Record<string, FieldValue> }`（`src/types.ts`）。
+`DataRow = { path, file: FileMeta, fields: Record<string, FieldValue> }`（`src/dsql/types.ts`）。
 `IngestWarning = { type, file, field?, message, rawLines? }`（重复键等摄取期容错）。
 
 **frontmatter 原文扫描**（`src/index/frontmatter.ts`）：
@@ -122,8 +122,8 @@ findDuplicateKeys(content): { field: string; rawLines: string[] }[];
 
 ### 5. 视图扩展点
 
-- 视图类型常量：`src/types.ts` 的 `IMPLEMENTED_VIEWS`（`TABLE_VIEW` / `LIST_VIEW` / `CARD_VIEW`）；
-- 渲染入口：`src/views/panel.ts` 的 `renderResultByView()`，按视图类型分派到
-  `src/views/table-view.ts` / `list-view.ts` / `card-view.ts`，新增视图类型在此扩展；
-- 视图与 SQL 双向同步工具：`src/utils/viewSync.ts` 的
+- 视图类型常量：`src/dsql/types.ts` 的 `IMPLEMENTED_VIEWS`（`TABLE_VIEW` / `LIST_VIEW` / `CARD_VIEW`）；
+- 渲染入口：`src/ui/panel.ts` 的 `renderResultByView()`，按视图类型分派到
+  `src/ui/views/table-view.ts` / `list-view.ts` / `card-view.ts`，新增视图类型在此扩展；
+- 视图与 SQL 双向同步工具：`src/ui/utils/viewSync.ts` 的
   `applyViewType(board, type)` / `detectTypeFromSql(sql)` / `normalizeSqlView(sql, type)`（均为纯函数）。
