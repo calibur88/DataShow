@@ -11,7 +11,7 @@
  */
 
 import type { BinOp, ColumnSel, Expr, Query, SortClause, SortKey, Source } from "./ast";
-import { FUNCTIONS, KEYWORDS, Lexer, type Token } from "./lexer";
+import { FUNCTIONS, Lexer, type Token } from "./lexer";
 import type { FieldValue, ViewType } from "@dsql/types";
 
 /** 查询解析错误：message 已格式化为「[DSQL] 第 x 行第 y 列：原因」。 */
@@ -546,6 +546,3 @@ function describe(tok: Token): string {
   if (tok.type === "op") return `%${tok.value}%`;
   return `「${tok.value}」`;
 }
-
-// KEYWORDS 仅用于 lexer 校验；此处引用避免未使用告警
-void KEYWORDS;
