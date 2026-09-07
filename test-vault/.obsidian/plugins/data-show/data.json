@@ -165,18 +165,18 @@
     },
     {
       "id": "x1-outlink-zhangsan",
-      "name": "人物关系（谁与张三有关）",
+      "name": "人物出链（谁引用了张三）",
       "type": "跨文件示例",
-      "description": "人物 ↔ 人物：用 frontmatter 关系数组做正向关系查询",
-      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 人物,\n  阵营,\n  身份,\n  **length**(关系) **AS** 关系数\n**FROM** \"示例/人物关系示例\"\n**WHERE** **contains**(关系, '张三')\n**SORT** 阵营 **ASC**",
+      "description": "人物 ↔ 人物：正向 wiki 链接查询，演示 file.outlinks",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 人物,\n  阵营,\n  身份,\n  **length**(file.outlinks) **AS** 出链数\n**FROM** \"示例/人物关系示例\"\n**WHERE** **contains**(file.outlinks, \"示例/人物关系示例/张三.md\")\n**SORT** 阵营 **ASC**",
       "viewType": ""
     },
     {
       "id": "x2-inlink-zhangsan",
-      "name": "人物关系反查（张三的关系圈）",
+      "name": "人物入链反查（张三的关系圈）",
       "type": "跨文件示例",
-      "description": "人物 ↔ 人物：同一关系数组，演示反查效果（contains 不区分方向）",
-      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 人物,\n  阵营,\n  关系,\n  **length**(关系) **AS** 关系数\n**FROM** \"示例/人物关系示例\"\n**WHERE** **contains**(关系, '张三')\n**SORT** 阵营 **ASC**",
+      "description": "人物 ↔ 人物：反向 wiki 链接查询，演示 file.inlinks",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 人物,\n  阵营,\n  身份,\n  **length**(file.inlinks) **AS** 入链数\n**FROM** \"示例/人物关系示例\"\n**WHERE** **contains**(file.inlinks, \"示例/人物关系示例/张三.md\")\n**SORT** 阵营 **ASC**",
       "viewType": ""
     },
     {
@@ -207,8 +207,8 @@
       "id": "x6-crossfile-not",
       "name": "跨文件 + NOT 组合",
       "type": "跨文件示例",
-      "description": "人物关系 + 状态过滤：与王五有关且未阵亡",
-      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 人物,\n  阵营,\n  身份,\n  关系\n**FROM** \"示例/人物关系示例\"\n**WHERE** **contains**(关系, '王五') **AND** **NOT** (状态 %==% '阵亡')\n**SORT** 阵营 **ASC**",
+      "description": "人物关系 + 状态过滤：出链命中王五且未阵亡",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 人物,\n  阵营,\n  身份,\n  **length**(file.outlinks) **AS** 出链数\n**FROM** \"示例/人物关系示例\"\n**WHERE** **contains**(file.outlinks, \"示例/人物关系示例/王五.md\") **AND** **NOT** (状态 %==% '阵亡')\n**SORT** 阵营 **ASC**",
       "viewType": ""
     },
     {
@@ -231,24 +231,24 @@
       "id": "s2-scene-cast",
       "name": "场景人物清单（跨文件夹引用）",
       "type": "跨文件夹示例",
-      "description": "场景 → 人物：场景 frontmatter 中的场景人物数组与出场人数对照",
-      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 场景,\n  类型,\n  场景人物,\n  **length**(场景人物) **AS** 出场人数\n**FROM** \"示例/场景示例\"\n**SORT** file.name **ASC**",
+      "description": "场景 → 人物：场景的 wiki 出链与 frontmatter 场景人物数组对照",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 场景,\n  类型,\n  场景人物,\n  **length**(file.outlinks) **AS** 出链数\n**FROM** \"示例/场景示例\"\n**SORT** file.name **ASC**",
       "viewType": ""
     },
     {
       "id": "s3-person-in-scene",
-      "name": "人物出场场景（含张三的场景）",
+      "name": "人物被某场景引用（入链跨文件夹）",
       "type": "跨文件夹示例",
-      "description": "场景 → 人物：用 contains(场景人物, 张三) 反向查人物出场场景",
-      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 场景,\n  类型,\n  地点,\n  场景人物\n**FROM** \"示例/场景示例\"\n**WHERE** **contains**(场景人物, '张三')\n**SORT** 地点 **ASC**",
+      "description": "人物 ← 场景：用 file.inlinks 反向查询跨文件夹引用",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 人物,\n  阵营,\n  身份,\n  **length**(file.inlinks) **AS** 被引用次数\n**FROM** \"示例/人物关系示例\"\n**WHERE** **contains**(file.inlinks, \"示例/场景示例/长坂坡.md\")\n**SORT** 阵营 **ASC**",
       "viewType": ""
     },
     {
       "id": "s4-person-multi-scene",
       "name": "人物跨场景出场（OR 组合）",
       "type": "跨文件夹示例",
-      "description": "场景 → 人物：两个场景条件用 OR 取并集",
-      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 场景,\n  类型,\n  地点,\n  场景人物\n**FROM** \"示例/场景示例\"\n**WHERE** **contains**(场景人物, '张三') **OR** **contains**(场景人物, '王五')\n**SORT** 地点 **ASC**",
+      "description": "人物 ← 场景：跨文件夹入链 OR 组合",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 人物,\n  阵营,\n  身份,\n  **length**(file.inlinks) **AS** 被引用次数\n**FROM** \"示例/人物关系示例\"\n**WHERE** **contains**(file.inlinks, \"示例/场景示例/长坂坡.md\") **OR** **contains**(file.inlinks, \"示例/场景示例/幽篁大营.md\")\n**SORT** 阵营 **ASC**",
       "viewType": ""
     },
     {
