@@ -107,6 +107,8 @@
   flex-direction: column;
   height: 100%;
   padding: 12px 16px;
+  /* 容器查询基准：窄屏规则按面板自身宽度触发（桌面窄分栏同样生效） */
+  container-type: inline-size;
 }
 
 .datashow-panel__header {
@@ -187,6 +189,56 @@
 
 .datashow-toolbar__spacer {
   flex: 1;
+}
+
+/* 搜索控件分组：宽屏 display:contents 融入工具条（布局与未分组时一致） */
+.datashow-toolbar__search-group {
+  display: contents;
+}
+
+/* ===== 窄屏（手机 / 桌面窄分栏）：工具条两行布局 =====
+   第一行（右对齐）：刷新 + 视图选择器，紧贴 DSQL 输入框下方；
+   第二行（左对齐）：搜索组，占满整行；结果区随文档流自然下移。 */
+@container (max-width: 520px) {
+  .datashow-panel__header {
+    flex-wrap: wrap;
+  }
+
+  .datashow-toolbar {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  /* spacer 弹性占满第一行左侧，把「刷新 + 视图」推到行尾 */
+  .datashow-toolbar__spacer {
+    order: 0;
+    flex: 1;
+  }
+
+  .datashow-toolbar__btn {
+    order: 1;
+  }
+
+  .datashow-toolbar__label {
+    order: 2;
+    flex-shrink: 0;
+  }
+
+  .datashow-toolbar__select {
+    order: 3;
+  }
+
+  .datashow-toolbar__search-group {
+    display: flex;
+    order: 10;
+    flex: 0 0 100%;
+    gap: 6px;
+  }
+
+  .datashow-toolbar__search {
+    flex: 1;
+    min-width: 0;
+  }
 }
 
 .datashow-toolbar__label {

@@ -151,15 +151,12 @@ export class DatashowPanelView extends ItemView {
       this.scheduleSave();
     });
 
-    // ---- 工具条：刷新 + 搜索（仅 CARD_VIEW 生效） + 视图模式 ----
+    // ---- 工具条：左（搜索组） + 右（刷新 + 视图模式） ----
     const toolbar = root.createDiv({ cls: "datashow-toolbar" });
-    toolbar.createEl("button", { cls: "datashow-toolbar__btn", text: "刷新" }).addEventListener(
-      "click",
-      () => this.renderResult(),
-    );
 
-    // 搜索控件：输入框 + 搜索 + 清空（视图切换时自动启用/禁用）
-    const searchInput = toolbar.createEl("input", {
+    // 搜索控件：输入框 + 搜索 + 清空（独立成组，窄屏整体换行到第二行）
+    const searchGroup = toolbar.createDiv({ cls: "datashow-toolbar__search-group" });
+    const searchInput = searchGroup.createEl("input", {
       cls: "datashow-toolbar__search",
       attr: { type: "text", placeholder: "🔍 搜索卡片..." },
     }) as HTMLInputElement;
@@ -170,15 +167,18 @@ export class DatashowPanelView extends ItemView {
         this.applySearch();
       }
     });
-    const searchBtn = toolbar.createEl("button", { cls: "datashow-toolbar__btn", text: "搜索" });
+    const searchBtn = searchGroup.createEl("button", { cls: "datashow-toolbar__btn", text: "搜索" });
     searchBtn.addEventListener("click", () => this.applySearch());
-    const clearBtn = toolbar.createEl("button", { cls: "datashow-toolbar__btn", text: "清空" });
+    const clearBtn = searchGroup.createEl("button", { cls: "datashow-toolbar__btn", text: "清空" });
     clearBtn.addEventListener("click", () => this.clearSearch());
     this.searchInput = searchInput;
     this.searchBtn = searchBtn;
     this.clearBtn = clearBtn;
 
     toolbar.createDiv({ cls: "datashow-toolbar__spacer" });
+    toolbar
+      .createEl("button", { cls: "datashow-toolbar__btn", text: "刷新" })
+      .addEventListener("click", () => this.renderResult());
     toolbar.createSpan({ cls: "datashow-toolbar__label", text: "视图" });
     const select = toolbar.createEl("select", { cls: "datashow-toolbar__select" }) as HTMLSelectElement;
     // R6 下拉选项：跟随语句 / 表格 / 列表 / 卡片
