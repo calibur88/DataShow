@@ -74,10 +74,26 @@ export class DatashowSidebarView extends ItemView {
     }
 
     for (const [type, items] of groups) {
-      const section = root.createDiv({ cls: "datashow-sidebar__section" });
+      const collapsed = this.plugin.settings.collapsedGroups.includes(type);
+      const section = root.createDiv({
+        cls: collapsed ? "datashow-sidebar__section is-collapsed" : "datashow-sidebar__section",
+      });
       const header = section.createDiv({ cls: "datashow-sidebar__group" });
       header.createSpan({ cls: "datashow-sidebar__caret", text: "▾" });
       header.createSpan({ text: type });
+      header.setAttribute("aria-expanded", String(!collapsed));
+
+      // 点击分组头切换折叠，并持久化到设置。
+      header.addEventListener("click", () => {
+        const nowCollapsed = !section.hasClass("is-collapsed");
+        section.toggleClass("is-collapsed", nowCollapsed);
+        header.setAttribute("aria-expanded", String(!nowCollapsed));
+        const set = new Set(this.plugin.settings.collapsedGroups);
+        if (nowCollapsed) set.add(type);
+        else set.delete(type);
+        this.plugin.settings.collapsedGroups = [...set];
+        void this.plugin.saveSettings();
+      });
 
       const list = section.createDiv({ cls: "datashow-sidebar__list" });
       for (const board of items) {

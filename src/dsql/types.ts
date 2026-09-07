@@ -67,6 +67,8 @@ export interface DatashowSettings {
   decimalPlaces: number;
   /** 看板定义（在设置中管理） */
   boards: BoardDef[];
+  /** 侧栏已折叠的分类名（重启后保留折叠状态） */
+  collapsedGroups: string[];
 }
 
 /**
@@ -101,6 +103,7 @@ export const DEFAULT_SETTINGS: DatashowSettings = {
   showDebug: false,
   decimalPlaces: 4,
   boards: [makeDefaultBoard()],
+  collapsedGroups: [],
 };
 
 /** 面板视图的状态：当前展示的看板 id */

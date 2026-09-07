@@ -1,7 +1,7 @@
 # DataShow API 文档
 
 分两部分：**官方 API**（Obsidian 提供、本插件用到的接口）与**插件 API**（DataShow 自身导出、
-可供二次开发 / 测试使用的接口）。示例均基于当前版本（插件 2.1.1，DSQL 2.0，minAppVersion 1.4.4）。
+可供二次开发 / 测试使用的接口）。示例均基于当前版本（插件 2.1.2，DSQL 2.0，minAppVersion 1.4.4）。
 
 ---
 
@@ -99,7 +99,7 @@ findDuplicateKeys(content): { field: string; rawLines: string[] }[];
 
 | 成员 | 说明 |
 |---|---|
-| `settings: DatashowSettings` | `{ openInNewTab, showDebug, decimalPlaces, boards: BoardDef[] }` |
+| `settings: DatashowSettings` | `{ openInNewTab, showDebug, decimalPlaces, boards: BoardDef[], collapsedGroups: string[] }` |
 | `saveSettings()` | 持久化到 `data.json`；触发 `boardListeners`（侧栏联动） |
 | `loadSettings()` | 载入并按 `normalizeBoard` 校形每个看板 |
 | `addBoardListener(fn)` | 看板定义变更订阅（面板外部变更同步），返回退订函数 |

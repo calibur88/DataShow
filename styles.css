@@ -29,12 +29,25 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  cursor: default;
+  cursor: pointer;
   user-select: none;
+}
+
+.datashow-sidebar__group:hover {
+  color: var(--text-normal);
 }
 
 .datashow-sidebar__caret {
   font-size: 9px;
+  transition: transform 0.15s ease;
+}
+
+.datashow-sidebar__section.is-collapsed .datashow-sidebar__list {
+  display: none;
+}
+
+.datashow-sidebar__section.is-collapsed .datashow-sidebar__caret {
+  transform: rotate(-90deg);
 }
 
 .datashow-sidebar__item {
