@@ -162,6 +162,118 @@
       "description": "CARD_VIEW：展示每条记录的字段与计算结果；点击编辑基础字段，派生列只读",
       "sql": "**CARD_VIEW** **SELECT**\n  file.name **AS** 名称,\n  价格,\n  数量,\n  (价格 %*% 数量) **AS** 小计\n**FROM** \"示例/数学示例\"\n**SORT** 价格 **DESC**",
       "viewType": "CARD_VIEW"
+    },
+    {
+      "id": "x1-outlink-zhangsan",
+      "name": "人物关系（谁与张三有关）",
+      "type": "跨文件示例",
+      "description": "人物 ↔ 人物：用 frontmatter 关系数组做正向关系查询",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 人物,\n  阵营,\n  身份,\n  **length**(关系) **AS** 关系数\n**FROM** \"示例/人物关系示例\"\n**WHERE** **contains**(关系, '张三')\n**SORT** 阵营 **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "x2-inlink-zhangsan",
+      "name": "人物关系反查（张三的关系圈）",
+      "type": "跨文件示例",
+      "description": "人物 ↔ 人物：同一关系数组，演示反查效果（contains 不区分方向）",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 人物,\n  阵营,\n  关系,\n  **length**(关系) **AS** 关系数\n**FROM** \"示例/人物关系示例\"\n**WHERE** **contains**(关系, '张三')\n**SORT** 阵营 **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "x3-and-logic",
+      "name": "AND 逻辑判断",
+      "type": "跨文件示例",
+      "description": "**AND** 取交集：阵营 = 天枢 且 状态 = 存活",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 人物,\n  阵营,\n  身份,\n  年龄,\n  状态\n**FROM** \"示例/人物关系示例\"\n**WHERE** 阵营 %==% '天枢' **AND** 状态 %==% '存活'\n**SORT** 年龄 **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "x4-or-precedence",
+      "name": "OR 与优先级（AND 优先于 OR）",
+      "type": "跨文件示例",
+      "description": "'中立' OR '天枢' AND '谋士' —— AND 先算，结果＝中立阵营 + 天枢谋士",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 人物,\n  阵营,\n  身份,\n  年龄\n**FROM** \"示例/人物关系示例\"\n**WHERE** 阵营 %==% '中立' **OR** 阵营 %==% '天枢' **AND** 身份 %==% '谋士'\n**SORT** 阵营 **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "x5-paren-precedence",
+      "name": "括号覆盖优先级",
+      "type": "跨文件示例",
+      "description": "('天枢' OR '幽篁') AND 存活 —— 括号提升 OR，结果＝两大阵营中的存活者",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 人物,\n  阵营,\n  身份,\n  状态\n**FROM** \"示例/人物关系示例\"\n**WHERE** (阵营 %==% '天枢' **OR** 阵营 %==% '幽篁') **AND** 状态 %==% '存活'\n**SORT** 阵营 **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "x6-crossfile-not",
+      "name": "跨文件 + NOT 组合",
+      "type": "跨文件示例",
+      "description": "人物关系 + 状态过滤：与王五有关且未阵亡",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 人物,\n  阵营,\n  身份,\n  关系\n**FROM** \"示例/人物关系示例\"\n**WHERE** **contains**(关系, '王五') **AND** **NOT** (状态 %==% '阵亡')\n**SORT** 阵营 **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "x7-camp-card",
+      "name": "人物阵营卡片（CARD 视图）",
+      "type": "跨文件示例",
+      "description": "CARD_VIEW：按「阵营」分列的人物卡，单击字段值可直接编辑 frontmatter",
+      "sql": "**CARD_VIEW** **SELECT**\n  阵营,\n  file.name **AS** 人物,\n  身份,\n  年龄,\n  状态\n**FROM** \"示例/人物关系示例\"\n**SORT** 年龄 **DESC**",
+      "viewType": "CARD_VIEW"
+    },
+    {
+      "id": "s1-scene-has-person",
+      "name": "场景检索（含张三的场景）",
+      "type": "跨文件夹示例",
+      "description": "contains(场景人物, '张三')：从场景侧按 frontmatter 数组反查出现在该场景的人物",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 场景,\n  类型,\n  地点,\n  **length**(场景人物) **AS** 出场人数\n**FROM** \"示例/场景示例\"\n**WHERE** **contains**(场景人物, '张三')\n**SORT** 地点 **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "s2-scene-cast",
+      "name": "场景人物清单（跨文件夹引用）",
+      "type": "跨文件夹示例",
+      "description": "场景 → 人物：场景 frontmatter 中的场景人物数组与出场人数对照",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 场景,\n  类型,\n  场景人物,\n  **length**(场景人物) **AS** 出场人数\n**FROM** \"示例/场景示例\"\n**SORT** file.name **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "s3-person-in-scene",
+      "name": "人物出场场景（含张三的场景）",
+      "type": "跨文件夹示例",
+      "description": "场景 → 人物：用 contains(场景人物, 张三) 反向查人物出场场景",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 场景,\n  类型,\n  地点,\n  场景人物\n**FROM** \"示例/场景示例\"\n**WHERE** **contains**(场景人物, '张三')\n**SORT** 地点 **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "s4-person-multi-scene",
+      "name": "人物跨场景出场（OR 组合）",
+      "type": "跨文件夹示例",
+      "description": "场景 → 人物：两个场景条件用 OR 取并集",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 场景,\n  类型,\n  地点,\n  场景人物\n**FROM** \"示例/场景示例\"\n**WHERE** **contains**(场景人物, '张三') **OR** **contains**(场景人物, '王五')\n**SORT** 地点 **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "s5-scene-and-not",
+      "name": "场景 + 逻辑（AND / NOT）",
+      "type": "跨文件夹示例",
+      "description": "含张三 **AND** **NOT** 结果为僵持：跨文件夹条件与逻辑取反叠加",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 场景,\n  类型,\n  地点,\n  结果\n**FROM** \"示例/场景示例\"\n**WHERE** **contains**(场景人物, '张三') **AND** **NOT** (结果 %==% '僵持')\n**SORT** 地点 **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "s6-cast-total",
+      "name": "出场人次汇总（TOTAL）",
+      "type": "跨文件夹示例",
+      "description": "**TOTAL** 1 统计场景总数，与各行 length(场景人物) 的出场人数并列",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 场景,\n  类型,\n  **length**(场景人物) **AS** 出场人数,\n  **TOTAL** 1 **AS** $场景数$\n**FROM** \"示例/场景示例\"\n**SORT** 出场人数 **DESC**",
+      "viewType": ""
+    },
+    {
+      "id": "s7-scene-card",
+      "name": "场景卡片（CARD 视图）",
+      "type": "跨文件夹示例",
+      "description": "CARD_VIEW：按「类型」分列的场景卡，卡片内可直接改 frontmatter",
+      "sql": "**CARD_VIEW** **SELECT**\n  类型,\n  file.name **AS** 场景,\n  地点,\n  季节,\n  场景人物\n**FROM** \"示例/场景示例\"\n**SORT** 地点 **ASC**",
+      "viewType": "CARD_VIEW"
     }
   ]
 }
