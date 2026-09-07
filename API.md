@@ -1,6 +1,6 @@
 # DataShow API 文档
 
-分两部分：**官方 API**（Obsidian 提供本插件用到的接口）与**插件 API**（DataShow 自身导出、可供二次开发/测试使用的接口）。示例均基于当前版本（插件 1.8.0，DSQL 1.5）。
+分两部分：**官方 API**（Obsidian 提供本插件用到的接口）与**插件 API**（DataShow 自身导出、可供二次开发/测试使用的接口）。示例均基于当前版本（插件 2.0.0，DSQL 2.0）。
 
 ---
 
@@ -17,7 +17,8 @@
 | `parseYaml(text)` | `string → any` | YAML 文本 → 对象（保存前校验，失败抛错） |
 | `app.fileManager.processFrontMatter(file, fn)` | `(TFile, (fm: any) => void) → Promise<void>` | **官方原子写回**：读-改-写 frontmatter，不碰正文 |
 
-插件内唯一写入点（`src/views/frontmatter-modal.ts`、`src/views/panel.ts`）：
+插件内唯一写入点（`src/views/panel.ts` 装配卡片保存回调 → `card-view.ts` 内联编辑触发、
+`frontmatter-modal.ts` 属性弹窗）：
 
 ```ts
 await app.fileManager.processFrontMatter(file, (fm) => {
@@ -62,10 +63,10 @@ import { executeQuery, evaluateExpr, compareUtf8 } from "src/query/executor";
 | `parseQuery(source)` | `string → Query` | DSQL → AST；错误 `QueryParseError`（带 line/col） |
 | `executeQuery(q, rows, ctx, opts?)` | `→ ResultSet` | 执行：FROM→WHERE→SORT→LIMIT；`opts.debug` 收集调试信息，`opts.ingestWarnings` 并入摄取期警告 |
 | `evaluateExpr(expr, row, ctx, track?, warn?, vars?)` | `→ FieldValue` | 单表达式求值（面板渲染单元格共用） |
-| `truthy(v)` | `FieldValue → boolean` | 裸真值判断（DSQL 1.5：empty / null / 0 / false / 空串 / 空数组 → 假） |
+| `truthy(v)` | `FieldValue → boolean` | 裸真值判断（DSQL：empty / null / 0 / false / 空串 / 空数组 → 假） |
 | `compareUtf8(a, b)` | `(string, string) → number` | UTF-8 字节序比较（排序/自动列的确定性基准） |
-| `EMPTY` | `FieldValue`（symbol 哨兵） | DSQL 1.5 未赋值哨兵（`src/types.ts`）；仅 `**empty**()` 能识别，其余运算按 null 传播 |
-| `ResultSet` | `{ view, columns, rows, globals, debug? }` | `columns: {alias, expr}[]`；`debug` 见下 |
+| `EMPTY` | `FieldValue`（symbol 哨兵） | DSQL 未赋值哨兵（`src/types.ts`）；仅 `**empty**()` 能识别，其余运算按 null 传播 |
+| `ResultSet` | `{ view, columns, rows, globals, debug? }` | `view: ViewType`；`columns: {alias, expr}[]`；`debug` 见下 |
 | `QueryWarning` | `{ type, message }` | 结构化警告（除零 / 类型不匹配 / 未知函数 / TOTAL / SORT / duplicateKey 等） |
 
 语法与语义见 [`data_show/docs/DSQL-EBNF.md`](data_show/docs/DSQL-EBNF.md)。
@@ -84,7 +85,7 @@ store.ingestWarnings(): IngestWarning[]; // 全库摄取警告（随查询调试
 `DataRow = { path, file: FileMeta, fields: Record<string, FieldValue> }`（`src/types.ts`）。
 `IngestWarning = { type, file, field?, message, rawLines? }`（重复键等摄取期容错）。
 
-**frontmatter 原文扫描**（`src/index/frontmatter.ts`，DSQL 1.5）：
+**frontmatter 原文扫描**（`src/index/frontmatter.ts`）：
 
 ```ts
 findDuplicateKeys(content): { field: string; rawLines: string[] }[];
@@ -109,14 +110,15 @@ findDuplicateKeys(content): { field: string; rawLines: string[] }[];
 {
   "id": "uuid",
   "name": "看板名称",       // 侧栏显示名
-  "type": "分组类型",       // 侧栏分组，可空
+  "type": "分组类型",       // 侧栏分组（自由分类），可空
   "description": "说明",
-  "sql": "**TABLE** **SELECT** ... **FROM** \"Notes\"",  // 在面板中编辑，防抖自动保存
-  "viewOverride": ""        // ""（跟随语句）| "table" | "list"
+  "sql": "**TABLE_VIEW** **SELECT** ... **FROM** \"Notes\"",  // 在面板中编辑，防抖自动保存
+  "viewType": ""            // ""（跟随语句）| "TABLE_VIEW" | "LIST_VIEW" | "CARD_VIEW"
 }
 ```
 
-### 5. 视图扩展点（规划中）
+### 5. 视图扩展点
 
-视图类型常量在 `src/types.ts` 的 `IMPLEMENTED_VIEWS`（当前 `table` / `list`）；
-渲染入口为 `panel.ts` 的 `renderResultSet()`，新增视图类型在此分支。
+视图类型常量在 `src/types.ts` 的 `IMPLEMENTED_VIEWS`（`TABLE_VIEW` / `LIST_VIEW` / `CARD_VIEW`）；
+渲染入口为 `panel.ts` 的 `renderResultByView()`，按视图类型分派到
+`table-view.ts` / `list-view.ts` / `card-view.ts`，新增视图类型在此扩展。
