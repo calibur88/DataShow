@@ -185,6 +185,38 @@
   font-size: 13px;
 }
 
+/* ===== 工具条搜索框（仅 CARD_VIEW 生效，表格/列表视图禁用） ===== */
+.datashow-toolbar__search {
+  font-size: 13px;
+  padding: 4px 8px;
+  min-width: 140px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+}
+
+.datashow-toolbar__search:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
+
+.datashow-toolbar__search:disabled,
+.datashow-toolbar__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  color: var(--text-faint);
+}
+
+.datashow-toolbar__search:disabled {
+  background: var(--background-modifier-border);
+}
+
+/* 搜索空结果提示（复用 .datashow-result__empty 外观，加间距） */
+.datashow-search__empty {
+  margin-top: 8px;
+}
+
 /* ===== 查询结果 ===== */
 .datashow-result {
   margin-top: 12px;

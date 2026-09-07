@@ -38,6 +38,12 @@ export class DatashowPanelView extends ItemView {
   private saveTimer: number | null = null;
   /** 工具条上的视图下拉（render 时建好，renderResult 复用） */
   private viewSelect: HTMLSelectElement | null = null;
+  /** 卡片视图搜索控件（render 时建好，renderResult 复用） */
+  private searchInput: HTMLInputElement | null = null;
+  private searchBtn: HTMLButtonElement | null = null;
+  private clearBtn: HTMLButtonElement | null = null;
+  /** 卡片视图搜索词（会话内临时状态，不持久化到 data.json） */
+  private searchTerm = "";
   /** 工具条刷新按钮（按 view 同步 enable/disable？暂保留始终可用） */
 
   constructor(leaf: WorkspaceLeaf, plugin: DatashowPlugin) {
@@ -105,7 +111,13 @@ export class DatashowPanelView extends ItemView {
       });
       return;
     }
+    const prevBoardId = this.renderedBoardId;
     this.renderedBoardId = board.id;
+
+    // 看板真正切换时清空搜索词（同一看板因外部元数据变更重绘时不清，避免误清用户输入）
+    if (prevBoardId !== board.id) {
+      this.searchTerm = "";
+    }
 
     // ---- 头部：名称 + 自由分类徽标（board.type 是分类，不是视图类型） ----
     const header = root.createDiv({ cls: "datashow-panel__header" });
@@ -132,12 +144,32 @@ export class DatashowPanelView extends ItemView {
       this.scheduleSave();
     });
 
-    // ---- 工具条：刷新 + 视图模式 ----
+    // ---- 工具条：刷新 + 搜索（仅 CARD_VIEW 生效） + 视图模式 ----
     const toolbar = root.createDiv({ cls: "datashow-toolbar" });
     toolbar.createEl("button", { cls: "datashow-toolbar__btn", text: "刷新" }).addEventListener(
       "click",
       () => this.renderResult(),
     );
+
+    // 搜索控件：输入框 + 搜索 + 清空（视图切换时自动启用/禁用）
+    const searchInput = toolbar.createEl("input", {
+      cls: "datashow-toolbar__search",
+      attr: { type: "text", placeholder: "🔍 搜索卡片..." },
+    }) as HTMLInputElement;
+    searchInput.value = this.searchTerm;
+    searchInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        this.applySearch();
+      }
+    });
+    const searchBtn = toolbar.createEl("button", { cls: "datashow-toolbar__btn", text: "搜索" });
+    searchBtn.addEventListener("click", () => this.applySearch());
+    const clearBtn = toolbar.createEl("button", { cls: "datashow-toolbar__btn", text: "清空" });
+    clearBtn.addEventListener("click", () => this.clearSearch());
+    this.searchInput = searchInput;
+    this.searchBtn = searchBtn;
+    this.clearBtn = clearBtn;
 
     toolbar.createDiv({ cls: "datashow-toolbar__spacer" });
     toolbar.createSpan({ cls: "datashow-toolbar__label", text: "视图" });
@@ -261,6 +293,13 @@ export class DatashowPanelView extends ItemView {
         return;
       }
       content.createDiv({ cls: "datashow-result__label", text: "查询结果" });
+      // 视图决策：board.viewType 非空 → 强制覆盖；空 → 跟随 SQL 关键词（解析失败回退到 TABLE_VIEW）
+      const view: ViewType =
+        board.viewType !== ""
+          ? board.viewType
+          : result?.view ?? detectTypeFromSql(sql) ?? "TABLE_VIEW";
+      // 搜索控件按视图联动启用/禁用（出错/0 行时也要同步，避免控件卡在上次状态）
+      this.syncSearchControls(view);
       if (error || !result || !query) {
         if (error) content.createDiv({ cls: "datashow-result__error", text: error });
         return;
@@ -269,9 +308,9 @@ export class DatashowPanelView extends ItemView {
         content.createDiv({ cls: "datashow-result__empty", text: "查询结果为空（0 行）。" });
         return;
       }
-      // R3 视图决策：board.viewType 非空 → 强制覆盖；空 → 跟随 SQL 关键词
-      const view: ViewType = board.viewType !== "" ? board.viewType : result.view;
       this.renderResultByView(content, view, query.withoutId, result);
+      // 仅卡片视图应用搜索过滤
+      if (view === "CARD_VIEW") this.applyFilter();
     };
     btnResult.addEventListener("click", () => {
       this.resultTab = "result";
@@ -302,6 +341,70 @@ export class DatashowPanelView extends ItemView {
       viewEl = renderTableView({ result, withoutId, decimalPlaces, onOpenFile });
     }
     wrap.appendChild(viewEl);
+  }
+
+  /** 应用搜索：保留输入框当前值，重跑结果区以重新套用过滤。 */
+  private applySearch(): void {
+    if (!this.searchInput) return;
+    this.searchTerm = this.searchInput.value;
+    this.renderResult();
+  }
+
+  /** 清空搜索：清空输入框与搜索词，重跑结果区恢复全部卡片。 */
+  private clearSearch(): void {
+    this.searchTerm = "";
+    if (this.searchInput) this.searchInput.value = "";
+    this.renderResult();
+  }
+
+  /**
+   * 卡片视图搜索过滤（DOM 后置过滤，不动 card-view.ts）：
+   * 遍历 .datashow-card，按 textContent 不区分大小写子串匹配隐藏不匹配卡片；
+   * 搜索词非空且全部隐藏时显示「没有匹配的卡片」提示。
+   */
+  private applyFilter(): void {
+    const container = this.resultWrap;
+    const kanban = container?.querySelector<HTMLElement>(".datashow-kanban");
+    if (!kanban) return;
+
+    // 清掉上一次搜索的空结果提示
+    kanban.parentElement?.querySelector(".datashow-search__empty")?.remove();
+
+    const term = this.searchTerm.trim().toLowerCase();
+    let visible = 0;
+    kanban.querySelectorAll<HTMLElement>(".datashow-card").forEach((card) => {
+      const text = (card.textContent ?? "").toLowerCase();
+      const hit = term === "" || text.includes(term);
+      card.style.display = hit ? "" : "none";
+      if (hit) visible++;
+    });
+
+    if (term !== "" && visible === 0) {
+      const empty = document.createElement("div");
+      empty.className = "datashow-result__empty datashow-search__empty";
+      empty.textContent = "没有匹配的卡片";
+      (kanban.parentElement ?? container)?.appendChild(empty);
+    }
+  }
+
+  /**
+   * 搜索控件按视图联动：
+   * - 卡片视图：输入框/搜索/清空均启用
+   * - 表格/列表视图：禁用并清空搜索词（恢复全部数据）
+   */
+  private syncSearchControls(view: ViewType): void {
+    const isCard = view === "CARD_VIEW";
+    if (this.searchInput) {
+      this.searchInput.disabled = !isCard;
+      this.searchInput.classList.toggle("is-disabled", !isCard);
+    }
+    if (this.searchBtn) this.searchBtn.disabled = !isCard;
+    if (this.clearBtn) this.clearBtn.disabled = !isCard;
+    if (!isCard) {
+      // 离开卡片视图 → 清空搜索词
+      this.searchTerm = "";
+      if (this.searchInput) this.searchInput.value = "";
+    }
   }
 
   /** 卡片字段保存：调 processFrontMatter 原子写回，索引增量更新由 metadataCache 事件触发 */
