@@ -1,7 +1,7 @@
 /* 数学示例测试：算术运算、乘方、比较、字符串连接、内置函数、非致命语义、UTF-8 字节序。 */
 import assert from "node:assert/strict";
 import { compareUtf8, evaluateExpr, executeQuery } from "../src/query/executor";
-import type { FieldValue } from "../src/types";
+import { EMPTY, type FieldValue } from "../src/types";
 import { makeRow, exec } from "./helpers";
 import { parseQuery } from "../src/query/parser";
 
@@ -73,7 +73,46 @@ test("内置函数 sqrt/cbrt/root/contains/length/lower/upper/empty", () => {
   assert.equal(evalOne(`**length**(标签)`), 2);
   assert.equal(evalOne(`**lower**(名)`), "abc");
   assert.equal(evalOne(`**upper**(名)`), "ABC");
-  assert.equal(evalOne(`**empty**(缺失)`), true);
+  // DSQL 1.5：empty() 仅认 empty 值（未赋值）；缺失字段求值 null → false
+  assert.equal(evalOn({ 已赋空: EMPTY })(`**empty**(已赋空)`), true);
+  assert.equal(evalOne(`**empty**(缺失)`), false);
+  assert.equal(evalOn({ s: "", arr: [] as FieldValue[], n: 0, b: false })(`**empty**(s)`), false);
+  assert.equal(evalOn({ s: "", arr: [] as FieldValue[] })(`**empty**(arr)`), false);
+  assert.equal(evalOn({ n: 0 })(`**empty**(n)`), false);
+  assert.equal(evalOn({ b: false })(`**empty**(b)`), false);
+  assert.equal(evalOne(`**empty**(null)`), false);
+});
+
+/* ---------- 三值语义：0 / null / empty 值分家（DSQL 1.5） ---------- */
+
+test("裸真值判断：0、false、空串、空数组、null、empty 值均为假", () => {
+  const data = [makeRow("M/x.md", "M", { n: 0, b: false, s: "", arr: [] as FieldValue[], e: EMPTY })];
+  const run = (where: string) =>
+    executeQuery(parseQuery(`**SELECT** a **FROM** "M" **WHERE** ${where}`), data, null).rows.length;
+  assert.equal(run(`n`), 0);          // 0 → 假（v1.5 由真改假）
+  assert.equal(run(`b`), 0);          // false → 假
+  assert.equal(run(`s`), 0);          // 空串 → 假
+  assert.equal(run(`arr`), 0);        // 空数组 → 假
+  assert.equal(run(`e`), 0);          // empty 值 → 假
+  assert.equal(run(`缺失`), 0);        // 缺失字段 → null → 假
+  assert.equal(run(`**NOT** 缺失`), 1);
+  assert.equal(run(`n %==% 0`), 1);   // 0 作为正常值参与比较一切照常
+});
+
+test("0 是正常值：运算照常（0 %+% 1 = 1）", () => {
+  const evalOne = evalOn({ n: 0 });
+  assert.equal(evalOne(`n %+% 1`), 1);
+  assert.equal(evalOne(`n %*% 5`), 0);
+});
+
+test("empty 值传播：除 empty() 外一切运算按 null 传播", () => {
+  const e = evalOn({ e: EMPTY });
+  assert.equal(e(`e %+% 1`), null);        // 算术 → null
+  assert.equal(e(`e %||% 'x'`), null);     // 连接 → null
+  assert.equal(e(`e %==% 1`), false);      // 比较 → false
+  assert.equal(e(`e %>=% 1`), false);
+  assert.equal(e(`e %==% null`), true);    // 与 null 同口径：== null 同一性
+  assert.equal(e(`e %!=% null`), false);   // %!=% 为其取反
 });
 
 test("**contains** 区分大小写（数组严格相等、字符串子串）", () => {
@@ -195,7 +234,7 @@ test("TOTAL 调试信息：AGG 消息与非数值跳过警告", () => {
     { debug: true },
   );
   assert.ok(r.debug!.aggregates.some((m) => m.includes("总成绩 = 300")));
-  assert.ok(r.debug!.warnings.some((w) => /跳过 .* 个非数值/.test(w)));
+  assert.ok(r.debug!.warnings.some((w) => /跳过 .* 个非数值/.test(w.message)));
 });
 
 /* ---------- 字符串连接 %||% 补充 ---------- */

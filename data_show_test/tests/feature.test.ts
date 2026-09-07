@@ -80,7 +80,7 @@ test("空 **BY** () 列表：视为无自定义优先级并计入 warnings", () 
     null,
     { debug: true },
   );
-  assert.ok(r.debug!.warnings.some((w) => /空优先级列表/.test(w)));
+  assert.ok(r.debug!.warnings.some((w) => /空优先级列表/.test(w.message)));
   assert.equal(r.rows.length, 3);
 });
 
@@ -134,8 +134,8 @@ test("调试：warnings 收集除零与类型不匹配（含次数）", () => {
     null,
     { debug: true },
   );
-  assert.ok(r.debug!.warnings.some((w) => /%\/% 除零（3 次）/.test(w)));
-  assert.ok(r.debug!.warnings.some((w) => /非数字（3 次）/.test(w)));
+  assert.ok(r.debug!.warnings.some((w) => w.type === "除零" && /除零（3 次）/.test(w.message)));
+  assert.ok(r.debug!.warnings.some((w) => w.type === "类型不匹配" && /非数字（3 次）/.test(w.message)));
 });
 
 test("调试：WHERE 引用不存在字段记录 fieldMisses", () => {

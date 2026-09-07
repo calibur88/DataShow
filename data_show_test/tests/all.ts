@@ -4,3 +4,4 @@ import "./feature.test";
 import "./math.test";
 import "./dsql-language.test";
 import "./store.test";
+import "./ingest.test";

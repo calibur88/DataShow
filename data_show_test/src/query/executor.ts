@@ -7,9 +7,9 @@
  */
 import type { BinOp, Expr, Query, Source } from "./ast";
 import { callFunction } from "./functions";
-import type { DataRow, FieldValue } from "../types";
+import { EMPTY, type DataRow, type FieldValue } from "../types";
 
-/* ---------- 调试信息（5.6） ---------- */
+/* ---------- 调试信息（6.6） ---------- */
 
 export interface FieldMiss {
   field: string;
@@ -22,13 +22,19 @@ export interface SourceStat {
   rows: number;
 }
 
+/** 结构化警告（DSQL 1.5）：type ∈ 除零 / 类型不匹配 / 未知函数 / TOTAL / SORT / duplicateKey / 摄取 等 */
+export interface QueryWarning {
+  type: string;
+  message: string;
+}
+
 export interface QueryDebug {
   from: string;
   where: string | null;
   sort: string | null;
   limit: string | null;
   fieldMisses: FieldMiss[];
-  warnings: string[];
+  warnings: QueryWarning[];
   sourceStats: SourceStat[];
   /** DSQL 1.4：聚合遍结果（**TOTAL** 项，按 SELECT 顺序） */
   aggregates: string[];
@@ -48,6 +54,8 @@ export interface ResultSet {
 export interface ExecuteOptions {
   /** 收集 DSQL 内部调试信息 */
   debug?: boolean;
+  /** DSQL 1.5：摄取期容错警告（如重复键剔除），随调试信息一并输出 */
+  ingestWarnings?: { type: string; message: string }[];
 }
 
 /**
@@ -62,7 +70,7 @@ export function executeQuery(
   const started = now();
   const enabled = opts.debug === true;
   const missing = new Map<string, FieldMiss>();
-  const warnCounts = new Map<string, number>();
+  const warnCounts = new Map<string, { type: string; count: number }>();
   const track: FieldTracker | undefined = enabled
     ? (row, path, v) => {
         if (v == null && !path.startsWith("this.")) {
@@ -74,7 +82,11 @@ export function executeQuery(
       }
     : undefined;
   const warn: WarnSink | undefined = enabled
-    ? (msg) => warnCounts.set(msg, (warnCounts.get(msg) ?? 0) + 1)
+    ? (msg, type = "语义") => {
+        const rec = warnCounts.get(msg) ?? { type, count: 0 };
+        rec.count++;
+        warnCounts.set(msg, rec);
+      }
     : undefined;
 
   // ---- FROM（含逐源统计） ----
@@ -82,25 +94,30 @@ export function executeQuery(
   const sourceStats: SourceStat[] | null = enabled ? collectSourceStats(q.from, rows) : null;
   const fromMsg = `输入 ${rows.length} 行 → 命中 ${matched.length} 行`;
 
+  // ---- 别名唯一性行字段冲突校验（DSQL 1.5：聚合遍开始前，不限是否含 TOTAL 项） ----
+  // 判定范围 = FROM 全量命中行的字段名并集，任一行出现过该字段名即冲突 → 致命错误
+  const aliasedItems = q.select === "*" ? [] : q.select.filter((c) => c.alias);
+  if (aliasedItems.length > 0) {
+    const fieldNames = new Set<string>();
+    for (const row of matched) for (const k of Object.keys(row.fields)) fieldNames.add(k);
+    for (const item of aliasedItems) {
+      if (fieldNames.has(item.alias!)) {
+        throw new Error(`[DSQL] 别名 '$${item.alias}$' 与现有字段名冲突，请改用其他别名`);
+      }
+    }
+  }
+
   // ---- 聚合遍（DSQL 1.4：恒忽略 WHERE，扫描 FROM 全量命中行） ----
   const totalItems = q.select === "*" ? [] : q.select.filter((c) => c.total);
   let globals: Map<string, FieldValue> | null = null;
   const aggMsgs: string[] = [];
   if (totalItems.length > 0) {
-    // 别名冲突校验：AS 别名（变量命名空间）与行字段命名空间冲突 → 致命错误
-    const fieldNames = new Set<string>();
-    for (const row of matched) for (const k of Object.keys(row.fields)) fieldNames.add(k);
-    for (const item of totalItems) {
-      if (item.alias && fieldNames.has(item.alias)) {
-        throw new Error(`[DSQL] 别名 '$${item.alias}$' 与现有字段名冲突，请改用其他别名`);
-      }
-    }
     globals = new Map();
     for (const item of totalItems) {
       const alias = item.alias!;
       let value = null;
       if (matched.length === 0) {
-        warn?.("**TOTAL** 空表（FROM 命中 0 行），返回 null");
+        warn?.("**TOTAL** 空表（FROM 命中 0 行），返回 null", "TOTAL");
       } else if (item.expr.kind === "lit" && typeof item.expr.value === "number") {
         value = item.expr.value * matched.length; // TOTAL 1 → 总行数；TOTAL 0 → 0
       } else {
@@ -112,10 +129,10 @@ export function executeQuery(
           else if (v != null) skipped++;
         }
         if (sum == null) {
-          warn?.(`**TOTAL** ${item.alias} 无数值可累加（字段缺失或全为非数值），返回 null`);
+          warn?.(`**TOTAL** ${item.alias} 无数值可累加（字段缺失或全为非数值），返回 null`, "TOTAL");
         } else {
           value = sum;
-          if (skipped > 0) warn?.(`**TOTAL** ${item.alias} 跳过 ${skipped} 个非数值行`);
+          if (skipped > 0) warn?.(`**TOTAL** ${item.alias} 跳过 ${skipped} 个非数值行`, "TOTAL");
         }
       }
       globals.set(alias, value);
@@ -140,7 +157,7 @@ export function executeQuery(
   if (q.sort && q.sort.keys.length > 0) {
     let comparisons = 0;
     if (enabled && q.sort.keys.some((k) => k.priority?.length === 0)) {
-      warn?.("**SORT** **BY** 空优先级列表（视为无自定义优先级）");
+      warn?.("**SORT** **BY** 空优先级列表（视为无自定义优先级）", "SORT");
     }
     matched = sortRows(matched, q.sort, ctx, track, enabled ? () => comparisons++ : undefined);
     if (enabled) sortMsg = `${describeSort(q.sort)}，比较 ${comparisons} 次`;
@@ -164,15 +181,18 @@ export function executeQuery(
 
   const result: ResultSet = { view: q.view, columns, rows: matched, globals };
   if (enabled) {
+    const warnings: QueryWarning[] = [...warnCounts.entries()].map(([msg, rec]) => ({
+      type: rec.type,
+      message: rec.count > 1 ? `${msg}（${rec.count} 次）` : msg,
+    }));
+    for (const w of opts.ingestWarnings ?? []) warnings.push(w);
     result.debug = {
       from: fromMsg,
       where: whereMsg,
       sort: sortMsg,
       limit: limitMsg,
       fieldMisses: [...missing.values()],
-      warnings: [...warnCounts.entries()].map(([msg, count]) =>
-        count > 1 ? `${msg}（${count} 次）` : msg,
-      ),
+      warnings,
       sourceStats: sourceStats ?? [],
       aggregates: aggMsgs,
       executionTimeMs: round1(now() - started),
@@ -212,7 +232,12 @@ function defaultAlias(expr: Expr, index: number): string {
 /* ---------- 表达式求值 ---------- */
 
 export type FieldTracker = (row: DataRow, path: string, value: FieldValue) => FieldValue;
-export type WarnSink = (message: string) => void;
+export type WarnSink = (message: string, type?: string) => void;
+
+/** empty 值在除 empty() 外的一切运算中按 null 传播（DSQL 1.5 三值语义）。 */
+function stripEmpty(v: FieldValue): FieldValue {
+  return v === EMPTY ? null : v;
+}
 
 /** 求值表达式（面板渲染单元格与执行器共用）。类型不匹配等非致命 → null。 */
 export function evaluateExpr(
@@ -235,17 +260,18 @@ export function evaluateExpr(
     case "call": {
       const args = expr.args.map((a) => evaluateExpr(a, row, ctx, track, warn, vars));
       try {
-        return callFunction(expr.name, args);
+        // empty() 是唯一能看见 empty 值的运算；其余函数收到的 empty 值已按 null 传播
+        return callFunction(expr.name, expr.name === "empty" ? args : args.map(stripEmpty));
       } catch {
-        warn?.(`未知函数 ${expr.name}()`);
+        warn?.(`未知函数 ${expr.name}()`, "未知函数");
         return null; // 非致命
       }
     }
     case "unary": {
       if (expr.op === "not") return !truthy(evaluateExpr(expr.expr, row, ctx, track, warn, vars));
-      const v = evaluateExpr(expr.expr, row, ctx, track, warn, vars);
+      const v = stripEmpty(evaluateExpr(expr.expr, row, ctx, track, warn, vars));
       if (typeof v !== "number") {
-        warn?.("一元正负号作用于非数字");
+        warn?.("一元正负号作用于非数字", "类型不匹配");
         return null;
       }
       return expr.op === "-" ? -v : v;
@@ -271,8 +297,8 @@ function evalBinary(
   if (op === "or") {
     return truthy(evaluateExpr(left, row, ctx, track, warn, vars)) || truthy(evaluateExpr(right, row, ctx, track, warn, vars));
   }
-  const l = evaluateExpr(left, row, ctx, track, warn, vars);
-  const r = evaluateExpr(right, row, ctx, track, warn, vars);
+  const l = stripEmpty(evaluateExpr(left, row, ctx, track, warn, vars));
+  const r = stripEmpty(evaluateExpr(right, row, ctx, track, warn, vars));
 
   switch (op) {
     case "==":
@@ -296,7 +322,7 @@ function evalBinary(
     case "%":
     case "^": {
       if (typeof l !== "number" || typeof r !== "number") {
-        warn?.(`算术运算 %${op}% 作用于非数字`);
+        warn?.(`算术运算 %${op}% 作用于非数字`, "类型不匹配");
         return null; // 非致命
       }
       switch (op) {
@@ -304,14 +330,14 @@ function evalBinary(
         case "-": return l - r;
         case "*": return l * r;
         case "/":
-          if (r === 0) { warn?.("%/% 除零"); return null; }
+          if (r === 0) { warn?.("%/% 除零", "除零"); return null; }
           return l / r;
         case "%":
-          if (r === 0) { warn?.("%%% 取模零"); return null; }
+          if (r === 0) { warn?.("%%% 取模零", "除零"); return null; }
           return l % r;
         case "^": {
           const p = Math.pow(l, r);
-          if (!Number.isFinite(p)) { warn?.("%^% 结果非有限数（如负数开偶次方）"); return null; }
+          if (!Number.isFinite(p)) { warn?.("%^% 结果非有限数（如负数开偶次方）", "类型不匹配"); return null; }
           return p;
         }
       }
@@ -349,8 +375,14 @@ function resolveOn(row: DataRow, path: string): FieldValue {
 
 /* ---------- WHERE / 真值 / 比较 ---------- */
 
+/**
+ * 裸真值判断（DSQL 1.5 三值语义）：empty 值、null、0、false、空串、空数组 → 假；其余一切值为真。
+ */
 export function truthy(v: FieldValue): boolean {
-  return v != null && v !== false && !(Array.isArray(v) && v.length === 0) && v !== "";
+  return (
+    v != null && v !== EMPTY && v !== 0 && v !== false &&
+    !(Array.isArray(v) && v.length === 0) && v !== ""
+  );
 }
 
 /**
@@ -440,7 +472,7 @@ function sortRows(
   // 预计算每行的键值（Schwartzian 变换，避免比较中重复求值）
   const keyed = rows.map((row) => ({
     row,
-    keys: sort.keys.map((k) => evaluateExpr(k.expr, row, ctx, track)),
+    keys: sort.keys.map((k) => stripEmpty(evaluateExpr(k.expr, row, ctx, track))),
   }));
 
   const ranks = sort.keys.map((k) => buildRank(k.priority));

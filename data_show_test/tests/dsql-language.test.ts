@@ -134,6 +134,30 @@ test("引用未定义变量（含反向引用）→ 致命报错", () => {
   );
 });
 
+test("两个 AS 别名同名 → 致命报错（DSQL 1.5 别名唯一性）", () => {
+  assert.throws(
+    () => parseQuery(`**SELECT** 成绩 %+% 1 **AS** $x$, 成绩 %+% 2 **AS** $x$ **FROM** "M"`),
+    /重复定义/,
+  );
+  assert.throws(
+    () => parseQuery(`**SELECT** a **AS** v, b **AS** v **FROM** "M"`),
+    /重复定义/,
+  );
+});
+
+test("非 TOTAL 场景别名与行字段冲突 → 致命报错（DSQL 1.5：聚合遍开始前校验）", () => {
+  assert.throws(
+    () => exec(`**SELECT** priority %+% 1 **AS** status **FROM** "Notes"`),
+    /与现有字段名冲突/,
+  );
+});
+
+test("NUMBER 词法：1. 与 .5 均为词法错误（小数点后必须至少一位数字）", () => {
+  assert.throws(() => parseQuery(`**SELECT** 1. **AS** v **FROM** "M"`), /非法数字/);
+  assert.throws(() => parseQuery(`**SELECT** .5 **AS** v **FROM** "M"`), /小数点开头/);
+  assert.throws(() => parseQuery(`**FROM** "M" **LIMIT** 1.`), /非法数字/);
+});
+
 test("别名与行字段名冲突 → 致命报错（执行期校验）", () => {
   // 共享数据集行字段含 status：别名 status 与之冲突
   assert.throws(
