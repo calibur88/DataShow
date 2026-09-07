@@ -2,7 +2,7 @@
 
 > **DSQL**（DataShow Query Language）—— Obsidian 元数据查询方言
 > **DSQL 版本**：1.5（2026-09-07，三值语义分家、别名唯一性、frontmatter 摄取容错） · 实现：`src/query/lexer.ts` · `parser.ts` · `executor.ts`
-> **注**：DSQL 语言版本与插件发布版本各自独立（正式版插件 1.8.0 实现 DSQL 1.4；DSQL 1.5 随测试版 `data_show_test` 演进）。
+> **注**：DSQL 语言版本与插件发布版本各自独立（正式版插件 1.8.0 实现 DSQL 1.5）。
 > 本文档为权威依据：语法 EBNF + 语义逐条定义，变更需同步本文与测试。
 
 ---

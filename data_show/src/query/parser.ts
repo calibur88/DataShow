@@ -29,6 +29,8 @@ class Parser {
   /** 是否处于 SELECT 列表内（DSQL 1.4：$变量$ 仅在 SELECT 中可引用） */
   private inSelect = false;
   private variableTokens = new Map<string, Token>();
+  /** DSQL 1.5：AS 别名 → 首次定义的 token（重复定义校验用） */
+  private aliasTokens = new Map<string, Token>();
   private totalToken: Token | null = null;
 
   constructor(private tokens: Token[]) {}
@@ -172,14 +174,21 @@ class Parser {
     return { expr, alias: this.parseAlias(), total: true };
   }
 
-  /** AS 别名：接受裸标识符或 $变量$ 写法，统一归一化为裸名 */
+  /** AS 别名：接受裸标识符或 $变量$ 写法，统一归一化为裸名；SELECT 内别名互不相同（DSQL 1.5） */
   private parseAlias(): string {
     const tok = this.peek();
+    let name: string;
     if (tok.type === "variable") {
       this.advance();
-      return tok.value;
+      name = tok.value;
+    } else {
+      name = this.expectIdent("**AS** 后应为别名（标识符或 $变量$）").value;
     }
-    return this.expectIdent("**AS** 后应为别名（标识符或 $变量$）").value;
+    if (this.aliasTokens.has(name)) {
+      throw this.err(tok, `别名 '$${name}$' 重复定义（SELECT 内 **AS** 别名互不相同）`);
+    }
+    this.aliasTokens.set(name, tok);
+    return name;
   }
 
   /** 静态校验：$变量$ 引用必须匹配更早定义的别名；TOTAL 操作数内禁止引用变量 */

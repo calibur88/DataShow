@@ -105,10 +105,6 @@ export type FieldValue = string | number | boolean | FieldValue[] | null;
  */
 export const EMPTY = Symbol("DSQL:empty") as unknown as FieldValue;
 
-export function isEmptyValue(v: FieldValue): boolean {
-  return v === (EMPTY as unknown);
-}
-
 /** 载入设置时的看板字段校形：缺失字段补默认值，不认识的字段丢弃。 */
 export function normalizeBoard(raw: Record<string, unknown>): BoardDef {
   return {

@@ -1,4 +1,5 @@
 import { App, TAbstractFile, TFile, debounce } from "obsidian";
+import { findDuplicateKeys } from "./frontmatter";
 import { buildRow } from "./row-builder";
 import type { DataStore } from "./store";
 
@@ -56,17 +57,18 @@ export class VaultScanner {
   /** 全量重建（首扫 / resolved 回落）。 */
   fullRebuild(): void {
     const reverse = reverseLinks(this.app.metadataCache.resolvedLinks);
-    const rows = this.app.vault
-      .getMarkdownFiles()
-      .map((file) =>
+    const files = this.app.vault.getMarkdownFiles();
+    this.store.upsertMany(
+      files.map((file) =>
         buildRow(
           file,
           this.app.metadataCache.getFileCache(file)?.frontmatter,
           Object.keys(this.app.metadataCache.resolvedLinks[file.path] ?? {}),
           reverse[file.path] ?? [],
         ),
-      );
-    this.store.upsertMany(rows);
+      ),
+    );
+    for (const file of files) void this.checkDuplicateKeys(file);
   }
 
   private flush(): void {
@@ -83,8 +85,32 @@ export class VaultScanner {
           reverse[path] ?? [],
         ),
       );
+      void this.checkDuplicateKeys(file);
     }
     this.pending.clear();
+  }
+
+  /**
+   * DSQL 1.5 摄取容错：重复键检测（异步，cachedRead 读原文顶层键）。
+   * 命中 → 该文件从结果集中剔除，计入 duplicateKey 摄取警告（原始键值对归档），查询继续。
+   */
+  private async checkDuplicateKeys(file: TFile): Promise<void> {
+    const findings = findDuplicateKeys(await this.app.vault.cachedRead(file));
+    if (findings.length === 0) {
+      this.store.setIngestWarnings(file.path, []);
+      return;
+    }
+    this.store.remove(file.path);
+    this.store.setIngestWarnings(
+      file.path,
+      findings.map((f) => ({
+        type: "duplicateKey",
+        file: file.path,
+        field: f.field,
+        message: `文件 "${file.path}" frontmatter 存在重复键 "${f.field}"，已从结果集中剔除`,
+        rawLines: f.rawLines,
+      })),
+    );
   }
 }
 

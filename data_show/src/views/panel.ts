@@ -195,6 +195,8 @@ export class DatashowPanelView extends ItemView {
       query = parseQuery(sql);
       result = executeQuery(query, this.plugin.store.all(), null, {
         debug: this.plugin.settings.showDebug,
+        // DSQL 1.5：摄取期容错警告（如重复键剔除的文件）随调试信息输出
+        ingestWarnings: this.plugin.store.ingestWarnings(),
       });
       if (this.plugin.settings.showDebug) {
         projMisses = new Map<string, import("../query/executor").FieldMiss>();
@@ -368,7 +370,7 @@ export class DatashowPanelView extends ItemView {
       });
     }
     for (const warning of dbg.warnings) {
-      entries.push({ op: "WARN", message: warning, warn: true });
+      entries.push({ op: "WARN", message: `[${warning.type}] ${warning.message}`, warn: true });
     }
     entries.push({ op: "TIME", message: `${dbg.executionTimeMs} ms` });
 

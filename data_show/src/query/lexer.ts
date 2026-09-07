@@ -210,6 +210,10 @@ export class Lexer {
       this.pos++;
       this.col++;
     }
+    // DSQL 1.5：小数点后必须至少一位数字（"1." / "1.2.3" 均为词法错误）
+    if (!/^\d+(\.\d+)?$/.test(value)) {
+      throw new LexError(`非法数字「${value}」（小数点后必须至少一位数字："1." 是词法错误）`, line, col);
+    }
     return { type: "number", value, line, col };
   }
 
@@ -251,6 +255,10 @@ export class Lexer {
 
   private readPunct(line: number, col: number): Token {
     const ch = this.src[this.pos];
+    if (ch === ".") {
+      // DSQL 1.5：NUMBER 小数点后必须至少一位数字，.5 为词法错误
+      throw new LexError("数字不能以小数点开头（\".5\" 是词法错误）", line, col);
+    }
     if ("(),.#".includes(ch)) {
       this.pos++;
       this.col++;

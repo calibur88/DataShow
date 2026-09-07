@@ -1,4 +1,4 @@
-import type { FieldValue } from "../types";
+import { EMPTY, type FieldValue } from "../types";
 
 /**
  * 内置函数注册表（6.4）。args 为已求值的参数。
@@ -8,10 +8,6 @@ export function callFunction(name: string, args: FieldValue[]): FieldValue {
   const fn = FUNCTIONS[name];
   if (!fn) return null; // 非致命：未知函数（词法层已拦截绝大多数）
   return fn(...args);
-}
-
-export function hasFunction(name: string): boolean {
-  return name in FUNCTIONS;
 }
 
 type Fn = (...args: FieldValue[]) => FieldValue;
@@ -43,7 +39,9 @@ const FUNCTIONS: Record<string, Fn> = {
   },
   lower: (value) => (typeof value === "string" ? value.toLowerCase() : value),
   upper: (value) => (typeof value === "string" ? value.toUpperCase() : value),
-  empty: (value) => value == null || value === "" || (Array.isArray(value) && value.length === 0),
+  // DSQL 1.5：当且仅当 x 为 empty 值（字段存在但未赋值）时 true；
+  // ""、[]、0、false、null、缺失字段均 false —— empty 不处理字符串与数组，仅兜底「未赋值」
+  empty: (value) => value === EMPTY,
 };
 
 /** v1.2：区分大小写。数组用严格相等匹配元素；字符串用子串包含。 */

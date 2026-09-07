@@ -99,6 +99,12 @@ export interface DataRow {
 
 export type FieldValue = string | number | boolean | FieldValue[] | null;
 
+/**
+ * DSQL 1.5 empty 值哨兵：字段存在但未赋值（frontmatter `字段:`，冒号后无内容）。
+ * 除 empty() 谓词外，一切运算按 null 传播（算术 → null + warning，比较 → false，真值为假）。
+ */
+export const EMPTY = Symbol("DSQL:empty") as unknown as FieldValue;
+
 /** 载入设置时的看板字段校形：缺失字段补默认值，不认识的字段丢弃。 */
 export function normalizeBoard(raw: Record<string, unknown>): BoardDef {
   return {

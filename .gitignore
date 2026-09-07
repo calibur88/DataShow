@@ -5,9 +5,12 @@ node_modules/
 data_show/main.js
 data_show_test/main.js
 
-# test-vault 中由构建自动同步的插件部署副本
-data_show/test-vault/.obsidian/plugins/
-data_show_test/test-vault/.obsidian/plugins/
+# test-vault 插件部署副本：只跟踪看板定义 data.json（核心资产，含全部 DSQL），
+# 其余（main.js / manifest.json / styles.css）为构建自动同步的产物，不入库
+data_show*/test-vault/.obsidian/plugins/*/main.js
+data_show*/test-vault/.obsidian/plugins/*/manifest.json
+data_show*/test-vault/.obsidian/plugins/*/styles.css
+data_show*/test-vault/.obsidian/plugins/*/*.map
 
 # Obsidian 本地工作区状态
 *.workspace.json
@@ -15,6 +18,7 @@ data_show*/test-vault/.obsidian/workspace*.json
 
 # AI 会话本地文件
 .zcode/
+.workbuddy/
 
 # 系统与编辑器杂项
 Thumbs.db

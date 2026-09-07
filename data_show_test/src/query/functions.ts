@@ -10,10 +10,6 @@ export function callFunction(name: string, args: FieldValue[]): FieldValue {
   return fn(...args);
 }
 
-export function hasFunction(name: string): boolean {
-  return name in FUNCTIONS;
-}
-
 type Fn = (...args: FieldValue[]) => FieldValue;
 
 const num = (v: FieldValue): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);

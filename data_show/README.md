@@ -9,6 +9,7 @@
 
 **当前版本**：`1.8.0`（正式版末段为 `0`；新功能先在 `../data_show_test` 以
 `x.y.001+` 测试版本开发，测试通过并经允许后迁移至此并定为 `x.y.0`）。
+**DSQL 版本**：`1.5`（语言版本与插件版本各自独立，规范见 [docs/DSQL-EBNF.md](docs/DSQL-EBNF.md)）。
 
 ## 安装
 
@@ -44,6 +45,11 @@
 - 排序：多级排序、`**SORT** 字段 **BY** ('值1', '值2')` 自定义优先级；
 - **聚合与派生变量（DSQL 1.4）**：`**TOTAL** 字段 **AS** $总成绩$` 全表聚合（恒忽略 WHERE）；
   `$变量$` 在 SELECT 中引用（链式派生），派生列只读；仅含 TOTAL 项时输出单行汇总；
+  SELECT 别名互不相同，且不得与行字段名冲突（DSQL 1.5 起为致命错误）；
+- **三种「无」互不混淆（DSQL 1.5）**：`0` / `false` 是**正常值**（仅裸真值判断为假，运算照常）；
+  `null` 是**空容器**（`字段: ""` / `字段: []` 摄取为 null）；**empty 值**是**未赋值**
+  （`字段:` 冒号后无内容），除 `**empty**()` 外的一切运算按 null 传播。
+  `**empty**(x)` 仅当 x 为未赋值时为真，`""` / `[]` / `0` / `false` / null 均为假；
 - 调试：「查询结果 / 调试信息」标签页显示各操作行数、字段缺失、非致命警告与耗时，列表限高独立滚动（默认关闭，设置可开）。
 
 ## 构建
@@ -63,16 +69,18 @@ versions.json      历史版本记录
 main.js            构建产物
 styles.css         样式
 CHANGELOG.md       更新日志（从简，只写功能更新）
-test-vault/        演示与验收 vault（预置三大类看板：功能/数学/DSQL语言；两个工程的构建产物都部署到这里）
+test-vault/        演示与验收 vault（预置四大类看板：功能/数学/DSQL语言/三值示例；两个工程的构建产物都部署到这里）
 src/
   main.ts          入口：装配各层、注册视图
-  types.ts         公共类型
+  types.ts         公共类型（含 DSQL 1.5 EMPTY 哨兵）
   settings.ts      设置页（看板管理）
-  index/           数据层：扫描器 / 行构造 / 行仓库
+  index/           数据层：扫描器 / 行构造 / 行仓库 / frontmatter 原文扫描
   query/           DSQL 语言层：词法 / 语法 / 执行（零 Obsidian 依赖）
   views/           表现层：看板侧栏 / 看板面板 / 属性编辑弹窗
-docs/DSQL-EBNF.md  DSQL v1.4 语法规范
+docs/DSQL-EBNF.md  DSQL v1.5 语法规范
 ```
+
+看板定义（名称/类型/说明/DSQL）存于插件 `data.json`，已纳入版本控制。
 
 构建时产物（main.js / manifest.json / styles.css）自动同步到 `test-vault/.obsidian/plugins/data-show/`
 （本工程专用的演示 vault；草稿工程的产物部署到它自己的 `../data_show_test/test-vault/`）。
