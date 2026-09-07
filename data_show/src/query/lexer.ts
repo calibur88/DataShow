@@ -1,5 +1,5 @@
 /**
- * DSQL v1.5 分词器。
+ * DSQL v2.0 分词器。
  *
  * 标记体系（按字面实现）：
  * - 关键词/内置函数：**WORD** 包裹（关键词约定全大写，函数约定小写）
@@ -7,6 +7,9 @@
  * - 路径："..."（双引号）；字符串：'...'（单引号）
  * - 裸标识符：字段名（支持 Unicode 与带点路径 file.name / this.状态）
  * - 裸字面量：true / false / null
+ *
+ * v2.0 视图关键词：TABLE_VIEW / LIST_VIEW / CARD_VIEW
+ * （旧 TABLE / LIST 已废除，词法器不再收录，落到"未知关键词"分支抛 LexError）
  */
 
 export type TokenType =
@@ -39,7 +42,7 @@ export class LexError extends Error {
 
 export const KEYWORDS = new Set([
   "SELECT", "FROM", "WHERE", "SORT", "BY", "AND", "OR", "NOT", "AS",
-  "LIMIT", "ASC", "DESC", "TABLE", "LIST", "WITHOUT", "ID",
+  "LIMIT", "ASC", "DESC", "TABLE_VIEW", "LIST_VIEW", "CARD_VIEW", "WITHOUT", "ID",
 ]);
 
 /** DSQL 1.4：聚合关键词（仅 SELECT 项合法，parser 单独拦截，不入 KEYWORDS 以免其他子句误吞） */

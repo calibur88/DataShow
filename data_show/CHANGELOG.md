@@ -1,6 +1,28 @@
 # DataShow 更新日志
 
-## 1.8.0（当前）
+## 2.0.0（当前）
+
+- **DSQL 语言升级 v2.0（破坏性大版本）**（自测试版迁移，规范见 `docs/DSQL-EBNF.md` v2.0）：
+  - 视图关键词 `TABLE` / `LIST` 废除，新增 `TABLE_VIEW` / `LIST_VIEW` / `CARD_VIEW`
+    （缺省 `TABLE_VIEW`）；旧 `**TABLE**` / `**LIST**` 直接抛 `LexError`「未知关键词」，不做兼容；
+  - 三个视图走相同数据管道，仅渲染不同；字符串字面量（如 `'**TABLE_VIEW**'`）不参与视图识别。
+- **新增卡片视图（CARD_VIEW）**：Kanban 看板布局——按首个可分组字段（如「状态」）拆列，列头
+  显示彩色圆点 + 分组值 + 数量，列内堆卡片；卡片以文件名作标题（点击打开笔记），
+  **单击字段值直接编辑 frontmatter**（回车保存 / Esc 取消 / 失焦还原）；派生列
+  （TOTAL / 表达式 / 变量 / `file.*` / `this.*`）只读。
+- **表格 / 列表视图改为只读**：移除原内联编辑，行点击 / 文件名点击打开笔记；
+  列表视图参考 Obsidian Bases 风格（文件名 + 派生列缩进子信息）。
+- **视图切换与 SQL 双向同步**（`src/utils/viewSync.ts`）：下拉切换调 `applyViewType` 同步
+  SQL 开头关键词；SQL 编辑器防抖保存调 `detectTypeFromSql` 反向同步下拉选中态。
+- **字段迁移**：`Board.viewOverride` → **`Board.viewType`**（类型 `ViewType | ""`，空 = 跟随语句）；
+  加载时按优先级迁移（`viewType` 优先、`viewOverride` 兜底）并写回一次；
+  `Board.type` 保持 `string` 不变——仍是用户自由填写的看板分类（侧栏分组依据）。
+- **设置页**：新增「视图模式」下拉（跟随语句 / 表格 / 列表 / 卡片），与「看板分类」自由输入并存。
+- **演示 vault 同步**：`test-vault/` 看板 18 → 20（新增「任务卡片」「数学卡片」两个 CARD_VIEW 示例），
+  全部看板 SQL 已同步到 DSQL v2.0，`viewOverride` 字段已迁移为 `viewType`。
+- 测试：106 例（七套件，位于 data_show_test）。
+
+## 1.8.0
 
 - **DSQL 语言升级 v1.5：三值语义分家 / 别名唯一性 / 摄取容错**（自测试版 1.8.001 迁移，
   插件版本不变，仅语言版本升级；规范见 `docs/DSQL-EBNF.md` v1.5）：

@@ -3,13 +3,26 @@
 export const SIDEBAR_VIEW_TYPE = "datashow-sidebar-view";
 export const PANEL_VIEW_TYPE = "datashow-panel-view";
 
+/**
+ * DSQL v2.0 视图类型。
+ * - TABLE_VIEW / LIST_VIEW / CARD_VIEW 三者平等，均可写入 SQL 并持久化
+ * - 旧 TABLE / LIST 关键词在 v2.0 直接抛语法错误，不做兼容
+ */
+export type ViewType = "TABLE_VIEW" | "LIST_VIEW" | "CARD_VIEW";
+
+/** 视图类型守卫 */
+export function isViewType(v: unknown): v is ViewType {
+  return v === "TABLE_VIEW" || v === "LIST_VIEW" || v === "CARD_VIEW";
+}
+
 /** 内置已实装的视图类型（结果区下拉可选） */
-export const IMPLEMENTED_VIEWS = ["table", "list"] as const;
+export const IMPLEMENTED_VIEWS = ["TABLE_VIEW", "LIST_VIEW", "CARD_VIEW"] as const;
 export type ImplementedView = (typeof IMPLEMENTED_VIEWS)[number];
 
 export const VIEW_LABELS: Record<string, string> = {
-  table: "表格",
-  list: "列表",
+  TABLE_VIEW: "表格",
+  LIST_VIEW: "列表",
+  CARD_VIEW: "卡片",
 };
 
 /**
@@ -20,14 +33,21 @@ export interface BoardDef extends Record<string, unknown> {
   id: string;
   /** 看板名称（侧栏显示名） */
   name: string;
-  /** 看板类型（用户自定义分类，可为空） */
+  /**
+   * 看板分类（用户自由填写，侧栏分组依据）。
+   * 与 ViewType 解耦——本字段是中文/自由分类，不是视图类型。
+   */
   type: string;
   /** 看板作用描述 */
   description: string;
   /** DSQL 查询语句 */
   sql: string;
-  /** 视图类型覆盖（空 = 跟随 DSQL 的 TABLE/LIST 关键字） */
-  viewOverride: string;
+  /**
+   * 视图模式覆盖（v2.0 重命名自 viewOverride）。
+   * - "" = 跟随 SQL（缺省 TABLE_VIEW，详见 DSQL-EBNF.md）
+   * - "TABLE_VIEW" / "LIST_VIEW" / "CARD_VIEW" = 强制覆盖
+   */
+  viewType: ViewType | "";
 }
 
 export interface DatashowSettings {
@@ -55,7 +75,7 @@ export function makeDefaultBoard(): BoardDef {
     type: "",
     description: "",
     sql: "",
-    viewOverride: "",
+    viewType: "",
   };
 }
 
@@ -105,14 +125,30 @@ export type FieldValue = string | number | boolean | FieldValue[] | null;
  */
 export const EMPTY = Symbol("DSQL:empty") as unknown as FieldValue;
 
-/** 载入设置时的看板字段校形：缺失字段补默认值，不认识的字段丢弃。 */
+/**
+ * 载入设置时的看板字段校形：缺失字段补默认值，不认识的字段丢弃。
+ *
+ * 字段迁移（R2 修订）：
+ *   1. `viewType` 合法 → 直接采用
+ *   2. `viewType` 非法/空，但 `viewOverride` 合法 → 采用 `viewOverride`（旧数据兼容）
+ *   3. 两者均非法/空 → ""
+ *
+ * `type` 字段不校验——保持自由分类语义（与 ViewType 解耦）。
+ */
 export function normalizeBoard(raw: Record<string, unknown>): BoardDef {
+  const viewTypeRaw = typeof raw.viewType === "string" ? raw.viewType : "";
+  const viewOverrideRaw = typeof raw.viewOverride === "string" ? raw.viewOverride : "";
+  const finalViewType: ViewType | "" = isViewType(viewTypeRaw)
+    ? viewTypeRaw
+    : isViewType(viewOverrideRaw)
+      ? viewOverrideRaw
+      : "";
   return {
     id: typeof raw.id === "string" ? raw.id : makeBoardId(),
     name: typeof raw.name === "string" ? raw.name : "未命名看板",
     type: typeof raw.type === "string" ? raw.type : "",
     description: typeof raw.description === "string" ? raw.description : "",
     sql: typeof raw.sql === "string" ? raw.sql : "",
-    viewOverride: typeof raw.viewOverride === "string" ? raw.viewOverride : "",
+    viewType: finalViewType,
   };
 }

@@ -1,6 +1,6 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type DatashowPlugin from "./main";
-import { makeBoardId, type BoardDef } from "./types";
+import { IMPLEMENTED_VIEWS, VIEW_LABELS, makeBoardId, type BoardDef, type ViewType } from "./types";
 
 /**
  * 插件设置页：
@@ -86,7 +86,7 @@ export class DatashowSettingTab extends PluginSettingTab {
             type: "",
             description: "",
             sql: "",
-            viewOverride: "",
+            viewType: "",
           };
           this.plugin.settings.boards.push(board);
           await this.plugin.saveSettings();
@@ -121,7 +121,7 @@ export class DatashowSettingTab extends PluginSettingTab {
 
     new Setting(item)
       .setName(board.name || "（未命名看板）")
-      .setDesc(board.type ? `类型：${board.type}` : "类型：未设置")
+      .setDesc(board.type ? `分类：${board.type}` : "分类：未设置")
       .addExtraButton((btn) =>
         btn
           .setIcon(this.expandedId === board.id ? "chevron-up" : "chevron-down")
@@ -158,12 +158,31 @@ export class DatashowSettingTab extends PluginSettingTab {
     );
     nameSetting.setDesc("侧栏显示的名称。");
 
-    new Setting(editor).setName("看板类型").addText((text) =>
+    new Setting(editor).setName("看板分类").addText((text) =>
       text.setPlaceholder("例如：任务 / 项目 / 自定义").setValue(board.type).onChange(async (value) => {
         board.type = value.trim();
         await this.plugin.saveSettings();
       }),
     );
+
+    // R6：视图模式下拉（与看板分类解耦，独立字段）
+    new Setting(editor)
+      .setName("视图模式")
+      .setDesc("下拉选择；「跟随语句」表示由 SQL 开头关键词决定渲染方式，无关键词则默认表格")
+      .addDropdown((dropdown) => {
+        dropdown.addOption("", "跟随语句");
+        for (const v of IMPLEMENTED_VIEWS) {
+          dropdown.addOption(v, VIEW_LABELS[v] ?? v);
+        }
+        dropdown.setValue(board.viewType);
+        dropdown.onChange(async (value) => {
+          // 白名单：仅接受 ViewType 或空串
+          board.viewType = value === "" || value === "TABLE_VIEW" || value === "LIST_VIEW" || value === "CARD_VIEW"
+            ? (value as ViewType | "")
+            : "";
+          await this.plugin.saveSettings();
+        });
+      });
 
     new Setting(editor).setName("作用描述").addTextArea((area) => {
       area.setValue(board.description).onChange(async (value) => {

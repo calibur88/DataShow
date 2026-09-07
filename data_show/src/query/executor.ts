@@ -1,13 +1,14 @@
 /**
- * DSQL v1.5 执行器。
+ * DSQL v2.0 执行器。
  *
  * 两遍执行模型：第一遍聚合遍（FROM 全量命中行，**忽略 WHERE**，计算 **TOTAL** → 变量表）；
  * 第二遍投影遍（WHERE → SORT → LIMIT → SELECT 投影，$变量$ 查变量表、裸标识符查行字段）。
  * 语义：类型不匹配/除零/缺字段为非致命（求值 null，计入 warnings）；排序 UTF-8 字节序确定性方案。
+ * 视图关键词仅透传 ResultSet.view，不影响数据管线（v2.0：TABLE_VIEW / LIST_VIEW / CARD_VIEW）。
  */
 import type { BinOp, Expr, Query, Source } from "./ast";
 import { callFunction } from "./functions";
-import { EMPTY, type DataRow, type FieldValue } from "../types";
+import { EMPTY, type DataRow, type FieldValue, type ViewType } from "../types";
 
 /* ---------- 调试信息（6.6） ---------- */
 
@@ -42,7 +43,8 @@ export interface QueryDebug {
 }
 
 export interface ResultSet {
-  view: "table" | "list";
+  /** v2.0：TABLE_VIEW / LIST_VIEW / CARD_VIEW，由 query.view 直接透传 */
+  view: ViewType;
   /** 实际使用的列（SELECT * 已展开为字段并集） */
   columns: { alias: string; expr: Expr; total?: true }[];
   rows: DataRow[];

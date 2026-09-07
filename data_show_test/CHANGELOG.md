@@ -3,9 +3,117 @@
 测试版（`data_show_test/`，插件 id `datashow-dev`）的开发日志：记录功能演进、
 语法变更与测试情况，比正式版详细。迁移到正式版的功能见 `../data_show/CHANGELOG.md`。
 
-> **当前状态**（2026-09）：本目录 `package.json` 版本号与正式版对齐于 **1.8.0**（不随测试递增）；
-> 开发条目以末段递增编号，1.7.001–1.7.003 已验收迁移至 `../data_show/` 定为 1.8.0，
-> **1.8.001**（DSQL 1.5）亦已迁移；下一轮改进从 **1.8.002** 开始。
+> **当前状态**（2026-09）：本目录 `package.json` 版本号与正式版对齐于 **2.0.0**（不随测试递增）；
+> 1.7.001–1.7.003 / 1.8.001 / 2.0.0 均已验收迁移至 `../data_show/` 正式版；
+> **2.0.0 重大破坏性变更（DSQL v2.0 + 卡片视图 + 字段迁移）已落地并迁移至正式版**。
+
+---
+
+## 插件版本
+
+### 2.0.0（DSQL v2.0 + 卡片视图 + 字段迁移，2026-09-07）
+
+> **破坏性大版本**：DSQL 关键词 `TABLE` / `LIST` 直接报语法错误；看板定义 `viewOverride` 字段
+> 在加载时迁移到 `viewType`（重命名，语义更明确）。test-vault 演示看板已全部同步更新。
+> **已迁移至正式版**（`data_show/manifest.json` 版本号 2.0.0）。
+
+#### 视图关键词升级
+
+- **DSQL 关键词**：`TABLE` / `LIST` 废除，新增 `TABLE_VIEW` / `LIST_VIEW` / `CARD_VIEW`；
+  缺省 `TABLE_VIEW`；旧 `**TABLE**` / `**LIST**` 直接抛 `LexError`「未知关键词」，不做兼容；
+- 三个 `*_VIEW` 关键词全部允许写进 SQL 并持久化到看板定义；
+- 执行层：三个视图走完全相同的数据管道，仅渲染不同；
+- 字符串字面量 `'**TABLE_VIEW**'` 等不参与视图识别（词法器天然隔离）。
+
+#### 卡片视图（独占内联编辑）
+
+- 新增 `src/views/card-view.ts`：Kanban 看板布局——按首个可分组字段（如「状态」）拆列，列内堆卡片；
+- **单击字段值**进入编辑（文本/数字/布尔/数组），回车保存（Esc 取消、失焦还原）；
+- 派生列（TOTAL / 表达式 / 变量 / `file.*` / `this.*`）**只读**（R5 简化判定）；
+- 保存走 `app.fileManager.processFrontMatter` 原子写回，索引增量更新自动重跑结果。
+
+#### 表格 / 列表视图改为只读
+
+- 表格：`src/views/table-view.ts` 移除原表格双击单元格内联编辑；改为行级 click 打开笔记；
+- 列表：`src/views/list-view.ts` 移除原"点击条目打开属性弹窗"；改为点击文件名/行打开笔记；
+  派生列（TOTAL / 变量 / `file.*` / `this.*`）作为缩进子信息，参考 Obsidian Bases 风格。
+
+#### 视图切换与 SQL 双向同步
+
+- 新增 `src/utils/viewSync.ts`：三个工具函数
+  - `applyViewType(board, newType)`：替换/注入 SQL 开头视图关键词 + 设置 `board.viewType`；
+  - `detectTypeFromSql(sql)`：跳过前导空白与 `--` 注释行，识别开头 VIEW 关键词
+    （命中 → 返回 `ViewType`；未命中 → 返回 `null`，R1 修订）；
+  - `normalizeSqlView(sql, type)`：纯函数，强制 SQL 开头关键词与 type 对齐
+    （旧 `**TABLE**` / `**LIST**` 也一并替换，避免下次解析报错）。
+- 面板下拉切换 → 调 `applyViewType` → 保存 → 重渲染（**`viewType` 强制覆盖时同步 SQL**）；
+- 面板 SQL 编辑器防抖保存 → 调 `detectTypeFromSql`，若与 `board.viewType` 不一致则
+  同步下拉选中态（**R3 显式语义**：空 SQL / 纯空白不切换，保持当前状态）。
+
+#### 字段迁移
+
+- `Board.viewOverride` → **`Board.viewType`**（重命名更明确语义），类型 `ViewType | ""`；
+- 加载时按 R2 优先级迁移：`viewType` 合法值优先；非法/空时 `viewOverride` 作为 fallback；
+- 加载完成后 `saveSettings` 写回一次，保证旧字段名不再重复读取；
+- `Board.type` **保持 `string` 不变**——仍是用户自由填写的看板分类（侧栏分组依据），与 ViewType 解耦。
+
+#### 设置页（R6 UI）
+
+- 新增「视图模式」下拉（跟随语句 / 表格 / 列表 / 卡片），与「看板分类」自由输入并存；
+- 「看板类型」标签改为「看板分类」（与视图模式在 UI 上明确区分）。
+
+#### 规范与文档
+
+- `docs/DSQL-EBNF.md` 升 **v2.0**：view 产生式改为 `(TABLE_VIEW | LIST_VIEW | CARD_VIEW)?`；
+  旧版本（v1.1–v1.5）历史演进已并入本 CHANGELOG（插件与 DSQL 合并版），文档末尾仅保留 v2.0 条目。
+
+#### 测试
+
+- 新增 `tests/viewSync.test.ts`（15 例）：`detectTypeFromSql` / `normalizeSqlView` / `applyViewType`；
+  覆盖 R1/R2/R3/R4 全部边界（空 SQL / 纯注释 / 旧词 / 字符串字面量 / 纯函数性）；
+- 新增 `tests/normalizeBoard.test.ts`（10 例）：`isViewType` 守卫 + `normalizeBoard` R2 优先级；
+- `tests/dsql-language.test.ts` 更新：view 字面量全部 `TABLE_VIEW` / `LIST_VIEW` / `CARD_VIEW`；
+  新增旧 `**TABLE**` / `**LIST**` 抛 LexError 测试；新增 R4 字符串字面量边界测试
+  （`'**TABLE_VIEW**'` 等不被误判为视图关键词）；
+- **总测试数：106 例**（80 → 106，新增 26 例）；`npm run build` 通过。
+
+---
+
+## DSQL 语言版本
+
+### v2.0（2026-09-07，当前）
+
+- 视图关键词：`TABLE_VIEW` | `LIST_VIEW` | `CARD_VIEW`（缺省 `TABLE_VIEW`）；
+- 废除 `TABLE` / `LIST`（直接抛 `LexError`，不做兼容）；
+- `Board.viewType`（重命名自 `viewOverride`）持久化视图模式；
+- 字符串字面量 `'**TABLE_VIEW**'` 不参与视图识别（词法器天然隔离）。
+
+### v1.5（2026-09-07）
+
+- 三值语义分家、别名唯一性、frontmatter 摄取容错；
+- 详见 [1.8.001](#18001dsql-15三值语义分家--别名唯一--摄取容错) 条目。
+
+### v1.4（2026-09-07）
+
+- TOTAL 全表聚合 + `$变量$` 派生体系；
+- 详见 [1.7.003](#1703插件测试版已随-180-迁移至正式版) 条目。
+
+### v1.3（2026-09-07）
+
+- 子句前件关系、SELECT 可省略、WITHOUT ID 任意位置；
+- 详见 [1.4.0](#140与正式版同步的基线) 条目。
+
+### v1.2（2026-09-07）
+
+- 标记语法字面化（`**关键词**` / `%运算符%`）、表达式完备、sqrt/cbrt/root、多级排序；
+- 详见 [0.7.0](#0702026-09-07dsql-v12-大版本标记语法字面化) 条目。
+
+### v1.1（2026-09-07）
+
+- SORT BY 自定义优先级 + 调试信息规范；
+- 详见 [0.6.0](#0602026-09-07sort-by-优先级--调试信息) 条目。
+
+---
 
 ## 1.8.001（DSQL 1.5：三值语义分家 / 别名唯一 / 摄取容错）
 

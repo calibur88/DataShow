@@ -1,11 +1,13 @@
 # DataShow 功能展示 vault
 
 > 本 vault 用于**功能展示与验收**（草稿开发目录专用）：用 Obsidian 打开并启用 DataShow Dev，
-> 即可演示 DSQL 查询、表格/列表视图与 frontmatter 属性编辑。
+> 即可演示 DSQL 查询、表格/列表/卡片视图与 frontmatter 属性编辑。
 > 草稿版（`datashow-dev`）构建产物自动部署到这里；正式版 vault 见 `data_show/test-vault/`。
 >
-> **DSQL v1.5 标记语法**：关键词用 `**` 包裹（如 `**SELECT**`）、运算符用 `%` 包裹（如 `%==%`）、
-> 字符串用单引号 `'值'`、路径用双引号 `"文件夹"`。完整规范见 [`../docs/DSQL-EBNF.md`](../docs/DSQL-EBNF.md)。
+> **DSQL v2.0 标记语法**：关键词用 `**` 包裹（如 `**SELECT**`）、运算符用 `%` 包裹（如 `%==%`）、
+> 字符串用单引号 `'值'`、路径用双引号 `"文件夹"`。**视图关键词**为
+> `**TABLE_VIEW**` / `**LIST_VIEW**` / `**CARD_VIEW**`（缺省 `TABLE_VIEW`）；
+> 旧 `**TABLE**` / `**LIST**` 已废除，写入会报 `LexError`。完整规范见 [`../docs/DSQL-EBNF.md`](../docs/DSQL-EBNF.md)。
 
 ## 示例数据（示例/）
 
@@ -18,20 +20,23 @@
 
 ## 预置看板（四大类）
 
-已预置 18 个看板，按侧栏「类型」分为四大类，与单测三大类 + 三值示例演示一一对应
+已预置 **20 个看板**，按侧栏「类型」分为四大类，与单测三大类 + 三值示例演示一一对应
 （**DSQL语言示例 = DSQL 语法规范演示**，仅在看板面板中查询；不支持、也不计划支持 ```datashow 代码块）：
 
 - **功能示例**（5 个）：五子句查询、SORT BY 状态机排序、反查链接列表、布尔与日期、全字段自动列；
 - **数学示例**（6 个）：四则与连接、乘方与取模（含除零 null 演示）、内置函数、比较与逻辑、汇总行（TOTAL 计数求和 + 派生平均）、占比（TOTAL 恒忽略 WHERE）；
 - **DSQL语言示例**（5 个，语法规范演示；聚合语法 `**TOTAL**` / `$变量$` 的演示放在数学示例类）：省略 SELECT、子句乱序、WITHOUT ID 任意位置、中文标识符与字段缺失、空 BY 警告；
-- **三值示例**（2 个，DSQL 1.5 三值语义演示）：三值展示（三行全部输出，缺失字段显示为 —，验证「null/empty 列为空」渲染）、empty 谓词与三值传播（七列对照：empty() 各输入、empty 算术/连接/比较传播、零值照常运算）。
+- **三值示例**（2 个，DSQL 1.5 三值语义演示）：三值展示（三行全部输出，缺失字段显示为 —，验证「null/empty 列为空」渲染）、empty 谓词与三值传播（七列对照：empty() 各输入、empty 算术/连接/比较传播、零值照常运算）；
+- **CARD_VIEW 示例**（2 个，DSQL v2.0 新增）：任务卡片、数学卡片——**点击字段值直接编辑 frontmatter**。
 
-## 可复制示例（DSQL 1.5）
+> 上一版本曾有「任务卡片（CARD 视图）」「数学卡片（CARD 视图）」，本版本同 id 复用并同步到 v2.0。
+
+## 可复制示例（DSQL v2.0）
 
 **汇总行（SELECT 仅含 TOTAL 项 → 单行结果）**
 
 ```sql
-**TABLE** **SELECT**
+**TABLE_VIEW** **SELECT**
   **TOTAL** 1 **AS** $笔记数$,
   **TOTAL** 价格 **AS** $总价格$,
   ($总价格$ %/% $笔记数$) **AS** $均价$
@@ -41,7 +46,7 @@
 **占比（TOTAL 恒忽略 WHERE：WHERE 只过滤显示行，聚合仍是全表口径）**
 
 ```sql
-**TABLE** **SELECT**
+**TABLE_VIEW** **SELECT**
   file.name **AS** 名称,
   价格,
   **TOTAL** 价格 **AS** $全表总价格$,
@@ -51,19 +56,46 @@
 **SORT** 价格 **DESC**
 ```
 
+**卡片视图（v2.0 新增：Kanban 看板 + 单击字段编辑）**
+
+```sql
+**CARD_VIEW** **SELECT**
+  status **AS** 状态,
+  owner **AS** 负责人,
+  priority **AS** 优先级
+**FROM** "示例/功能示例"
+```
+
 ## 操作
 
-1. 设置 → DataShow → 看板：查看/增删看板（名称/类型/说明）；
-2. 左侧栏 DataShow 图标打开看板侧栏（按类型分组），点击看板在主工作区打开面板；
-3. 面板 DSQL 编辑框可直接改查询（防抖自动保存），「刷新」手动重跑，「视图」下拉切换表格/列表；
-4. 表格双击单元格 / 列表点击条目 / 行 ✎ 直接编辑 frontmatter，保存后结果自动刷新；
-5. 结果下方折叠的调试信息展示 FROM/WHERE/SORT/LIMIT 各阶段统计（设置可关）。
+1. 设置 → DataShow → 看板：查看/增删看板（**名称 / 分类 / 说明 / 视图模式**）；
+2. 左侧栏 DataShow 图标打开看板侧栏（按分类分组），点击看板在主工作区打开面板；
+3. 面板 DSQL 编辑框可直接改查询（防抖自动保存），「刷新」手动重跑，
+   「视图」下拉切换**跟随语句 / 表格 / 列表 / 卡片**（强制覆盖时同步 SQL 开头关键词）；
+4. **表格 / 列表**：行点击或文件名点击 → 打开笔记（无内联编辑）；
+5. **卡片**：单击字段值直接编辑 frontmatter（回车保存 / Esc 取消 / 失焦还原）；
+   派生列（TOTAL / 表达式 / 变量 / `file.*` / `this.*`）**只读**；
+6. 结果下方折叠的调试信息展示 FROM/WHERE/SORT/LIMIT 各阶段统计（设置可关）。
 
 ## 开发
 
 ```bash
 cd data_show_test  # 草稿版 → 部署到本 vault plugins/datashow-dev/
-npm run build && npm test   # 测试五大类：功能示例 / 数学示例 / DSQL 语言 / store / 摄取层
+npm run build && npm test   # 测试七大类：功能示例 / 数学示例 / DSQL 语言 / store / 摄取层 / viewSync / normalizeBoard
 
 正式版另行构建部署：cd data_show → npm run build → data_show/test-vault/
 ```
+
+### 迁移快照 `data.json.back`
+
+本 vault 的看板定义存在 `plugins/datashow-dev/data.json`。测试时面板的「视图下拉 / SQL 反向同步」
+会改写其中的 `viewType` 字段（把「跟随语句」的空值写成显式 `TABLE_VIEW` / `LIST_VIEW`）——
+这些是**测试现场**，不应随迁移带入正式版。
+
+因此同目录保留一份 **`data.json.back`** 作为迁移标准快照：
+
+- 每次测试完、准备迁移前，用 `.back` 覆盖 `data.json`（即删掉测试过程中被改写的新 `data.json`，
+  用 `.back` 顶回去），即可直接迁移；
+- Obsidian 只认 `data.json`，**完全不会去加载 `data.json.back`**（带其它扩展名的文件对它透明，无需担心干扰）。
+
+迁移标准：20 个看板，18 个 `viewType: ""`（跟随语句）+ 2 个 `CARD_VIEW`，SQL 全为 v2.0 关键词。

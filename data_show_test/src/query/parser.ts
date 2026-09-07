@@ -1,13 +1,16 @@
 /**
- * DSQL v1.5 解析器（递归下降）。
+ * DSQL v2.0 解析器（递归下降）。
  *
  * 子句按前件关系解析：各子句至多出现一次，书写顺序不限；
  * WHERE / SORT / LIMIT 以 **FROM** 为前件（必须在其之后），SELECT 可省略（默认全部字段）。
  * 表达式优先级：OR < AND < NOT < 比较 < 连接 < 加减 < 乘除取模 < 乘方（右结合）< 一元。
+ *
+ * v2.0 view 产生式：（**TABLE_VIEW** | **LIST_VIEW** | **CARD_VIEW**）?（缺省 TABLE_VIEW）
+ * 旧 **TABLE** / **LIST** 已被词法器废除，落到"未知关键词"分支抛 LexError。
  */
 import type { BinOp, ColumnSel, Expr, Query, SortClause, SortKey, Source } from "./ast";
 import { FUNCTIONS, KEYWORDS, Lexer, type Token } from "./lexer";
-import type { FieldValue } from "../types";
+import type { FieldValue, ViewType } from "../types";
 
 export class QueryParseError extends Error {
   constructor(
@@ -36,14 +39,17 @@ class Parser {
   constructor(private tokens: Token[]) {}
 
   parseQuery(): Query {
-    // [TABLE | LIST]（可省略，默认 TABLE）
-    let view: "table" | "list" = "table";
-    if (this.isMarked("TABLE")) {
+    // v2.0：[TABLE_VIEW | LIST_VIEW | CARD_VIEW]（可省略，默认 TABLE_VIEW）
+    let view: ViewType = "TABLE_VIEW";
+    if (this.isMarked("TABLE_VIEW")) {
       this.advance();
-      view = "table";
-    } else if (this.isMarked("LIST")) {
+      view = "TABLE_VIEW";
+    } else if (this.isMarked("LIST_VIEW")) {
       this.advance();
-      view = "list";
+      view = "LIST_VIEW";
+    } else if (this.isMarked("CARD_VIEW")) {
+      this.advance();
+      view = "CARD_VIEW";
     }
 
     let select: ColumnSel[] | "*" = "*";

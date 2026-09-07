@@ -14,24 +14,25 @@ function test(name: string, fn: () => void): void {
 
 /* ---------- 语法结构 ---------- */
 
-test("v1.3 标准查询：**TABLE** **SELECT** ... **FROM** ... **WHERE** ... **SORT** ... **LIMIT**", () => {
+test("v2.0 标准查询：**TABLE_VIEW** **SELECT** ... **FROM** ... **WHERE** ... **SORT** ... **LIMIT**", () => {
   const r = exec(
-    `**TABLE** **SELECT** status **AS** 状态, owner **AS** 负责人 **FROM** "Notes" **WHERE** status %==% '进行中' **SORT** priority **ASC**`,
+    `**TABLE_VIEW** **SELECT** status **AS** 状态, owner **AS** 负责人 **FROM** "Notes" **WHERE** status %==% '进行中' **SORT** priority **ASC**`,
   );
-  assert.equal(r.view, "table");
+  assert.equal(r.view, "TABLE_VIEW");
   assert.deepEqual(r.columns.map((c) => c.alias), ["状态", "负责人"]);
   assert.deepEqual(r.rows.map((r) => r.file.name), ["任务A", "任务C"]);
 });
 
-test("视图可省略（默认 TABLE），**LIST** 亦可用", () => {
-  assert.equal(exec(`**SELECT** status **FROM** "Notes"`).view, "table");
-  assert.equal(exec(`**LIST** **SELECT** status **FROM** "Notes"`).view, "list");
+test("视图可省略（默认 TABLE_VIEW），**LIST_VIEW** / **CARD_VIEW** 亦可用", () => {
+  assert.equal(exec(`**SELECT** status **FROM** "Notes"`).view, "TABLE_VIEW");
+  assert.equal(exec(`**LIST_VIEW** **SELECT** status **FROM** "Notes"`).view, "LIST_VIEW");
+  assert.equal(exec(`**CARD_VIEW** **SELECT** status **FROM** "Notes"`).view, "CARD_VIEW");
 });
 
 test("**SELECT** * 自动列；**WITHOUT** **ID**", () => {
   const r = exec(`**SELECT** * **FROM** "Notes" **LIMIT** 1`);
   assert.ok(r.columns.length >= 3);
-  const r2 = exec(`**TABLE** **WITHOUT** **ID** **SELECT** status **FROM** "Notes"`);
+  const r2 = exec(`**TABLE_VIEW** **WITHOUT** **ID** **SELECT** status **FROM** "Notes"`);
   assert.equal(r2.columns.length, 1); // WITHOUT ID 时面板隐藏文件列，列本身仍存在
 });
 
@@ -42,9 +43,9 @@ test("无别名投影：字段路径为默认别名，表达式为 列N", () => 
 
 /* ---------- 子句前件关系（书写顺序自由） ---------- */
 
-test("**SELECT** 可省略（默认 *），**LIST** **FROM** ... **WHERE** ... 直接可用", () => {
-  const r = parseQuery(`**LIST** **FROM** "Notes" **WHERE** **contains**(file.outlinks, "Notes/任务A.md")`);
-  assert.equal(r.view, "list");
+test("**SELECT** 可省略（默认 *），**LIST_VIEW** **FROM** ... **WHERE** ... 直接可用", () => {
+  const r = parseQuery(`**LIST_VIEW** **FROM** "Notes" **WHERE** **contains**(file.outlinks, "Notes/任务A.md")`);
+  assert.equal(r.view, "LIST_VIEW");
   assert.equal(r.select, "*");
   assert.ok(r.where);
   const r2 = parseQuery(`**FROM** "Notes"`);
@@ -84,13 +85,25 @@ test("**WITHOUT** **ID** 可在任意子句位置", () => {
   assert.equal(r.rows.length, 1);
 });
 
-test("错误带行列号；未知 **关键词** 报错；旧写法不再兼容", () => {
+test("错误带行列号；未知 **关键词** 报错；v2.0 旧视图词直接报错", () => {
   assert.throws(
     () => parseQuery(`**SELECT** a\n**FROM** "x"\n**LIMIT** abc`),
     (e: unknown) => e instanceof QueryParseError && /第 3 行/.test((e as Error).message),
   );
   assert.throws(() => parseQuery(`**FOO**`), /未知关键词/);
-  assert.throws(() => parseQuery(`TABLE SELECT a FROM "x"`), /缺少 \*\*FROM\*\* 子句/); // 旧写法不再兼容
+  // v2.0：**TABLE** / **LIST** 不再是关键词，直接报「未知关键词」
+  assert.throws(() => parseQuery(`**TABLE** **SELECT** a **FROM** "x"`), /未知关键词/);
+  assert.throws(() => parseQuery(`**LIST** **SELECT** a **FROM** "x"`), /未知关键词/);
+});
+
+/* ---------- v2.0 字符串字面量边界：'**TABLE**' 等不应被误判为视图关键词（R4） ---------- */
+
+test("字符串字面量中的 '**TABLE**' / '**LIST**' / '**CARD_VIEW**' 不参与视图识别", () => {
+  // 这些 SQL 应正常解析，r.view 应为缺省 TABLE_VIEW
+  for (const lit of ["**TABLE**", "**LIST**", "**CARD_VIEW**", "**TABLE_VIEW**", "**LIST_VIEW**"]) {
+    const r = parseQuery(`**SELECT** '${lit}' **AS** 保留字测试 **FROM** "x"`);
+    assert.equal(r.view, "TABLE_VIEW", `字符串字面量 '${lit}' 不应改变 view`);
+  }
 });
 
 test("**SORT** **BY** 语法错误", () => {

@@ -1,4 +1,6 @@
-/** DSQL v1.2 AST。 */
+/** DSQL v2.0 AST。 */
+
+import type { ViewType } from "../types";
 
 export type BinOp =
   | "==" | "!=" | ">" | "<" | ">=" | "<="   // 比较
@@ -96,7 +98,8 @@ export interface SortClause {
 }
 
 export interface Query {
-  view: "table" | "list";
+  /** DSQL v2.0：TABLE_VIEW / LIST_VIEW / CARD_VIEW；缺省 TABLE_VIEW */
+  view: ViewType;
   withoutId: boolean;
   /** "*" = 自动列（结果行字段并集） */
   select: ColumnSel[] | "*";

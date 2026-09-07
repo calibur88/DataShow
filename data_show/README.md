@@ -1,15 +1,15 @@
 # DataShow
 
 面向 Obsidian 的元数据看板插件：把笔记属性（frontmatter）索引成数据仓库，
-用自研查询语言 **DSQL** 查询，在看板面板中渲染为表格 / 列表视图。
+用自研查询语言 **DSQL** 查询，在看板面板中渲染为表格 / 列表 / 卡片视图。
 
 - **数据中立**：不预设字段体系，任何 vault 的 Properties 都能查；
 - **Markdown First**：数据只存于笔记本身，插件不建私有数据库；
 - **确定性排序**：UTF-8 字节序，跨平台结果一致。
 
-**当前版本**：`1.8.0`（正式版末段为 `0`；新功能先在 `../data_show_test` 以
+**当前版本**：`2.0.0`（正式版末段为 `0`；新功能先在 `../data_show_test` 以
 `x.y.001+` 测试版本开发，测试通过并经允许后迁移至此并定为 `x.y.0`）。
-**DSQL 版本**：`1.5`（语言版本与插件版本各自独立，规范见 [docs/DSQL-EBNF.md](docs/DSQL-EBNF.md)）。
+**DSQL 版本**：`2.0`（语言版本与插件版本各自独立，规范见 [docs/DSQL-EBNF.md](docs/DSQL-EBNF.md)）。
 
 ## 安装
 
@@ -18,18 +18,23 @@
 
 ## 使用
 
-1. **设置 → DataShow → 看板**：新建看板，填写名称（侧栏显示名）、类型（侧栏分组）、作用描述；
+1. **设置 → DataShow → 看板**：新建看板，填写名称（侧栏显示名）、分类（侧栏分组）、
+   作用描述、视图模式（跟随语句 / 表格 / 列表 / 卡片）；
 2. 点击左侧栏（ribbon 仪表盘图标）打开看板侧栏，点击看板在主工作区打开面板；
-3. 在面板的 **DSQL** 编辑框中输入查询（自动保存），「刷新」立即重跑，「视图」下拉切换表格/列表；
-4. 修改笔记属性后，查询结果自动刷新。
+3. 在面板的 **DSQL** 编辑框中输入查询（自动保存），「刷新」立即重跑，
+   「视图」下拉切换**跟随语句 / 表格 / 列表 / 卡片**（强制覆盖时同步 SQL 开头关键词）；
+4. **表格 / 列表**：行点击 / 文件名点击打开笔记（只读）；
+   **卡片**：单击字段值直接编辑 frontmatter（派生列只读）；
+5. 修改笔记属性后，查询结果自动刷新。
 
 ## DSQL 快速上手
 
 完整语法见 [docs/DSQL-EBNF.md](docs/DSQL-EBNF.md)。关键词用 `**` 包裹、运算符用 `%` 包裹、
-字符串单引号、路径双引号：
+字符串单引号、路径双引号。视图关键词为 `**TABLE_VIEW**` / `**LIST_VIEW**` / `**CARD_VIEW**`
+（可省略，缺省 `TABLE_VIEW`；旧 `**TABLE**` / `**LIST**` 已废除）：
 
 ```sql
-**TABLE** **SELECT**
+**TABLE_VIEW** **SELECT**
   status **AS** 状态,
   owner **AS** 负责人
 **FROM** "Notes"
@@ -43,9 +48,9 @@
 - 函数：`**sqrt** **cbrt** **root** **contains** **length** **lower** **upper** **empty**`
   （`**contains**` 区分大小写，忽略大小写用 `**contains**(**lower**(字段), '值')`）；
 - 排序：多级排序、`**SORT** 字段 **BY** ('值1', '值2')` 自定义优先级；
-- **聚合与派生变量（DSQL 1.4 引入，当前 1.5）**：`**TOTAL** 字段 **AS** $总成绩$` 全表聚合（恒忽略 WHERE）；
+- **聚合与派生变量（DSQL 1.4 引入）**：`**TOTAL** 字段 **AS** $总成绩$` 全表聚合（恒忽略 WHERE）；
   `$变量$` 在 SELECT 中引用（链式派生），派生列只读；仅含 TOTAL 项时输出单行汇总；
-  SELECT 别名互不相同，且不得与行字段名冲突（DSQL 1.5 起为致命错误）；
+  SELECT 别名互不相同，且不得与行字段名冲突；
 - **三种「无」互不混淆（DSQL 1.5）**：`0` / `false` 是**正常值**（仅裸真值判断为假，运算照常）；
   `null` 是**空容器**（`字段: ""` / `字段: []` 摄取为 null）；**empty 值**是**未赋值**
   （`字段:` 冒号后无内容），除 `**empty**()` 外的一切运算按 null 传播。
@@ -69,18 +74,19 @@ versions.json      历史版本记录
 main.js            构建产物
 styles.css         样式
 CHANGELOG.md       更新日志（从简，只写功能更新）
-test-vault/        演示与验收 vault（预置四大类看板：功能/数学/DSQL语言/三值示例；仅部署本工程插件 data-show）
+test-vault/        演示与验收 vault（预置四大类看板：功能/数学/DSQL语言/三值示例 + 卡片视图示例；仅部署本工程插件 data-show）
 src/
   main.ts          入口：装配各层、注册视图
-  types.ts         公共类型（含 DSQL 1.5 EMPTY 哨兵）
-  settings.ts      设置页（看板管理）
+  types.ts         公共类型（含 ViewType、DSQL 1.5 EMPTY 哨兵）
+  settings.ts      设置页（看板管理 + 视图模式）
   index/           数据层：扫描器 / 行构造 / 行仓库 / frontmatter 原文扫描
   query/           DSQL 语言层：词法 / 语法 / 执行（零 Obsidian 依赖）
-  views/           表现层：看板侧栏 / 看板面板 / 属性编辑弹窗
-docs/DSQL-EBNF.md  DSQL v1.5 语法规范
+  utils/viewSync.ts  视图与 SQL 双向同步工具（applyViewType / detectTypeFromSql / normalizeSqlView）
+  views/           表现层：看板侧栏 / 看板面板 / 表格·列表·卡片视图 / 属性编辑弹窗
+docs/DSQL-EBNF.md  DSQL v2.0 语法规范
 ```
 
-看板定义（名称/类型/说明/DSQL）存于插件 `data.json`，已纳入版本控制。
+看板定义（名称/分类/说明/视图模式/DSQL）存于插件 `data.json`，已纳入版本控制。
 
 构建时产物（main.js / manifest.json / styles.css）自动同步到 `test-vault/.obsidian/plugins/data-show/`
 （本工程专用的演示 vault；草稿工程的产物部署到它自己的 `../data_show_test/test-vault/`）。

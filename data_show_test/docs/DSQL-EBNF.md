@@ -1,8 +1,8 @@
-# DSQL 语法规范 v1.5（EBNF）
+# DSQL 语法规范 v2.0（EBNF）
 
 > **DSQL**（DataShow Query Language）—— Obsidian 元数据查询方言
-> **DSQL 版本**：1.5（2026-09-07，三值语义分家、别名唯一性、frontmatter 摄取容错） · 实现：`src/query/lexer.ts` · `parser.ts` · `executor.ts`
-> **注**：DSQL 语言版本与插件发布版本各自独立（正式版插件 1.8.0 实现 DSQL 1.5）。
+> **DSQL 版本**：2.0（2026-09-07，视图关键词统一为 *VIEW 后缀，新增 CARD_VIEW，废除旧 TABLE/LIST）
+> **注**：DSQL 语言版本与插件发布版本各自独立（破坏性变更，详见末尾版本记录）。
 > 本文档为权威依据：语法 EBNF + 语义逐条定义，变更需同步本文与测试。
 
 ---
@@ -17,7 +17,7 @@
 | **数据中立** | 不预设字段；UTF-8 字节序确定性排序 |
 | **非致命语义** | 类型不匹配/除零/字段缺失求值为 null，不中断查询 |
 
-**关键词（`**` 包裹，约定全大写）**：`SELECT FROM WHERE SORT BY AND OR NOT AS LIMIT ASC DESC TABLE LIST WITHOUT ID TOTAL`
+**关键词（`**` 包裹，约定全大写）**：`SELECT FROM WHERE SORT BY AND OR NOT AS LIMIT ASC DESC TABLE_VIEW LIST_VIEW CARD_VIEW WITHOUT ID TOTAL`
 **内置函数（`**` 包裹，约定小写）**：`sqrt cbrt root contains length lower upper empty`
 
 ---
@@ -57,7 +57,7 @@ query          = [ view ] , { clause } , EOF ;             (* 各 clause 至多�
 clause         = select_clause | from_clause | where_clause
                | sort_clause | limit_clause | without_id ;
 
-view           = **TABLE** | **LIST** ;                    (* 缺省 TABLE *)
+view           = **TABLE_VIEW** | **LIST_VIEW** | **CARD_VIEW** ;  (* 缺省 TABLE_VIEW *)
 without_id     = **WITHOUT** , **ID** ;                    (* 任意子句位置 *)
 select_clause  = **SELECT** , select_list ;                (* 可整体省略，省略 = "*" 全字段 *)
 from_clause    = **FROM** , source ;                       (* 唯一必填子句 *)
@@ -397,45 +397,13 @@ TOTAL 的非数值跳过 / 空表 / 字段缺失分别计入 warnings / fieldMis
 ## 8. DSQL 语言版本记录
 
 > 以下记录 DSQL 语言规范本身的版本演进，与插件发布版本号各自独立。
+> **v2.0 以前的版本演进记录已并入 CHANGELOG.md（插件与 DSQL 合并），本节仅保留 v2.0 起的当前规范变更。**
 
-- v1.1（2026-09-07）：SORT BY 自定义优先级；调试信息规范。
-- v1.2（2026-09-07）：标记语法字面化（`**关键词**` / `%运算符%`）；SELECT 必须子句；表达式完备；sqrt/cbrt/root；多级排序。不兼容 v1.1。
-- **v1.2 修订 2（2026-09-07）**：
-  - 数据源 **AND 优先于 OR**（两级文法）；
-  - `**BY**` 优先级改为**作用于其书写的排序键**（方向与 BY 书写顺序不限）；
-  - `**contains**` 改为**区分大小写**（数组严格 `===`，字符串子串），忽略大小写用 `**lower**` 组合；
-  - 乘方结果非有限数（负数开偶次方）→ null；
-  - null 比较语义明确：参与比较 → false（%!=% 取反；null == null → true 同一性）；
-  - 调试对象扩展：`warnings`（非致命问题+次数）、`sourceStats`（逐源行数）、where 剔除示例、sort 比较次数；
-  - 解析错误统一 `[DSQL]` 前缀。
-- **v1.2 修订 3（2026-09-07）**：
-  - 子句解析由**固定书写顺序**改为**前件关系**：书写顺序自由，每条至多一次；
-    WHERE / SORT / LIMIT 以 `**FROM**` 为前件，缺前件报「需要 \*\*FROM\*\* 作为前件」；
-  - `**SELECT**` 改为可省略（省略 = `*` 全字段自动列）；`**FROM**` 成为唯一必填子句；
-  - `**WITHOUT** **ID**` 可写在任意子句位置。
-- **v1.3（2026-09-07，测试修订 1.3.001）**：
-  - 规范勘误与语义补全（语言行为不变，文档与实现对齐）：
-    `sort_item` 的方向与 `**BY**` 各至多一次、先后不限（文法改为 `{ sort_modifier }`）；
-    `comparison` 裸操作数的真值语义正式写入；末尾方向归属最后一个 sort_item（文法勘误，
-    移除不可达的子句级方向产生式，执行器 dir 字段保留）、未写方向的键默认 ASC；
-    数字不支持科学计数法与负数字面量；自动列按 UTF-8 字节序（实现同步修正）；
-  - 空 `**BY** ()` 列表：视为无自定义优先级并计入 warnings（实现新增）；
-  - 调试 `from` 描述明确为「源解析后的命中行数（去重后）」。
-- **v1.4（2026-09-07）**：新增 **TOTAL 全表聚合与 $变量$ 派生体系**：
-  - `**TOTAL** ( ident | NUMBER ) **AS** 别名`（别名强制）作为 select_item；两遍执行模型（聚合遍忽略 WHERE）；
-  - `$变量$` 引用（variable primary），AS 别名归一化为裸名进入变量命名空间；命名空间与行字段隔离，
-    但**别名与行字段同名 → 致命报错**；
-  - 变量仅 SELECT 内可引用（WHERE/SORT 报错）；不可反向引用（未定义变量报错）；TOTAL 操作数内禁止引用变量；
-  - 派生列只读；SELECT 仅含 TOTAL 项时输出单行合成结果；debug 新增 aggregates。
-- **v1.5（2026-09-07，当前）**：**三值语义分家、别名唯一性、frontmatter 摄取容错**：
-  - 三种"无"正交定义：`0`/`false` 为正常值（仅裸真值为假，运算照常）；`null` 为空容器值
-    （`字段: ""` / `字段: []` 摄取为 null；算术 → null + warning，比较 → false）；
-    **empty 值**为未赋值（`字段:` 冒号后无内容产生；除 `empty()` 外一切运算按 null 传播）；
-  - 裸真值判断重写：empty 值、null、0、false、空串、空数组均为假，其余为真（**0 由真改假**）；
-  - `**empty**()` 语义收窄：**当且仅当** x 为 empty 值时 true；`""`/`[]`/`0`/`false`/null/缺失字段均 false；
-  - NUMBER 文法收窄：小数点后必须至少一位数字，`1.` 与 `.5` 为词法错误；
-  - SELECT 别名唯一性：所有 AS 别名互不相同，且不得与 FROM 全量命中行字段名并集重复，
-    检查提前至聚合遍开始前，违反即致命错误（不限是否含 TOTAL 项）；
-  - frontmatter 摄取：重复键文件从结果集剔除并计入 `duplicateKey` warnings（含文件名与字段名），
-    原始键值对保留在 sourceStats/notes 档案；新增「摄取容错策略」骨架节；
-  - warnings 结构化（`type` + `message`）；§6 下小节编号勘误 5.1–5.8 → 6.1–6.8。
+- **v2.0（2026-09-07，当前）**：**视图关键词统一 *VIEW 后缀，废除旧 TABLE / LIST**：
+  - 视图产生式：`(**TABLE_VIEW** | **LIST_VIEW** | **CARD_VIEW**)?`，缺省 `TABLE_VIEW`；
+  - 旧 `**TABLE**` / `**LIST**` 直接报 `LexError`「未知关键词」（不做兼容）；
+  - 新增 `**CARD_VIEW**`：表格/列表之外新增的卡片视图（执行层走同一数据管道，仅渲染不同）；
+  - 三个 `*_VIEW` 关键词均可写入 SQL 并持久化到看板定义；
+  - 视图模式持久化字段：`Board.viewType`（重命名自 v1.x 的 `viewOverride`），类型 `ViewType | ""`；`""` 表示跟随 SQL 关键词；
+  - 字符串字面量 `'**TABLE_VIEW**'` 等不参与视图识别（`readMarked` 只在 `**` 包裹的 token 中匹配，天然安全）。
+  - 不兼容：v1.x 写法的 `**TABLE**` / `**LIST**` 全部需要替换为对应 `*_VIEW`；v1.x 看板定义的 `viewOverride` 字段名在加载时迁移到 `viewType`，旧值不丢失。
