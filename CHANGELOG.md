@@ -21,6 +21,18 @@
 - 实现方式为 DOM 后置过滤，视图层（card-view / table-view / list-view）零改动，
   不影响卡片内联编辑、视图切换、防抖保存等既有功能。
 
+**工程结构重构**：`src/` 迁移为 `dsql / index / ui` 三层目录，功能逻辑零变更。
+
+- `src/query/` → `src/dsql/`（DSQL 语言层，`src/types.ts` 一并移入），保持零 Obsidian 依赖；
+- `src/views/` → `src/ui/`（panel / sidebar 移至 ui/ 根，三视图与属性弹窗移至 `ui/views/`），
+  `src/utils/viewSync.ts` → `src/ui/utils/viewSync.ts`；`main.ts` / `settings.ts` 留根；
+- 跨层引用统一走路径别名 `@dsql/*` / `@index/*` / `@ui/*`
+  （tsconfig / esbuild / 测试运行器三处同构配置）；
+- 按注释规范重写全部源码注释（文件头 `@module` + `@description`，导出函数 `@param` + `@returns`），
+  规范落稿 CONTRIBUTING.md §8；
+- 代码清理（删除未使用 import）与文档同步（CONTRIBUTING / API / ARCHITECTURE / README）；
+- 验收：`tsc --noEmit` 零错误，106 个单元测试全部通过。
+
 ### DSQL 更新
 
 本次无 DSQL 语法 / 语义变更。

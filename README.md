@@ -7,12 +7,12 @@
 - **Markdown First**：数据只存于笔记本身，插件不建私有数据库；
 - **确定性排序**：UTF-8 字节序，跨平台结果一致。
 
-- **插件版本**：`2.1.0`
+- **插件版本**：`2.1.1`
 - **插件 ID**：`data-show`（唯一 ID，插件目录与 `manifest.json` 一致）
 - **最低 Obsidian 版本**：`1.4.4`
 - **DSQL 语言版本**：`2.0`（语言版本与插件版本各自独立，规范见 [docs/DSQL-语言规范.md](docs/DSQL-语言规范.md)）
 
-> **版本兼容性**：`2.1.0` 的功能逻辑与 `2.0.x` 完全兼容，不涉及 DSQL 语法变更，
+> **版本兼容性**：`2.1.1` 的功能逻辑与 `2.1.0` 完全兼容，不涉及 DSQL 语法变更，
 > 也不涉及看板视图与界面交互的变更；已有 `data.json` 看板定义可直接沿用。
 
 ## 单目录工程结构
@@ -34,17 +34,17 @@ DataShow/
 └── test-vault-local/    本地测试库（不入库，日常验收用）
 ```
 
-`src/` 分层：
+`src/` 分层（`dsql / index / ui` 三层，跨层引用走别名 `@dsql/*` / `@index/*` / `@ui/*`）：
 
 ```
 src/
 ├── main.ts         插件入口：装配各层、注册视图
-├── types.ts        公共类型与常量（唯一类型出口，含 ViewType 与 EMPTY 哨兵）
 ├── settings.ts     设置页：看板管理 + 视图模式
-├── index/          数据层：扫描器 / 行构造 / 行仓库 / frontmatter 原文扫描
-├── query/          DSQL 语言层：词法 / 语法 / 执行（零 Obsidian 依赖）
-├── utils/          viewSync：视图与 SQL 双向同步（纯函数，可独立测试）
-└── views/          表现层：侧栏 / 看板面板 / 表格·列表·卡片视图 / 属性编辑弹窗
+├── dsql/           DSQL 语言层（零 Obsidian 依赖）：types.ts 唯一类型出口（含 ViewType 与
+│                   EMPTY 哨兵）+ lexer / parser / ast / functions / executor
+├── index/          索引层：扫描器 / 行构造 / 行仓库 / frontmatter 原文扫描
+└── ui/             表现层：panel / sidebar + views/（表格·列表·卡片视图、属性编辑弹窗）
+                    + utils/（viewSync 视图与 SQL 双向同步，纯函数）
 ```
 
 ## 安装
