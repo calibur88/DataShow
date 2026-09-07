@@ -7,11 +7,11 @@
  *   views/（表现层：侧栏 + 看板面板） · settings.ts（看板与设置）
  */
 import { Plugin, WorkspaceLeaf } from "obsidian";
-import { VaultScanner } from "./index/scanner";
-import { DataStore } from "./index/store";
+import { VaultScanner } from "@index/scanner";
+import { DataStore } from "@index/store";
 import { DatashowSettingTab } from "./settings";
-import { DatashowPanelView } from "./views/panel";
-import { DatashowSidebarView } from "./views/sidebar";
+import { DatashowPanelView } from "@ui/panel";
+import { DatashowSidebarView } from "@ui/sidebar";
 import {
   DEFAULT_SETTINGS,
   PANEL_VIEW_TYPE,
@@ -21,7 +21,7 @@ import {
   type BoardDef,
   type DatashowSettings,
   type PanelViewState,
-} from "./types";
+} from "@dsql/types";
 
 export default class DatashowPlugin extends Plugin {
   settings: DatashowSettings = DEFAULT_SETTINGS;

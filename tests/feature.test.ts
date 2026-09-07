@@ -1,8 +1,8 @@
 /* 功能示例测试：数据源、排序、LIMIT、调试信息、file.* 虚拟列、this 上下文、跨目录多组数据。 */
 import assert from "node:assert/strict";
-import { executeQuery, evaluateExpr } from "../src/query/executor";
-import { parseQuery } from "../src/query/parser";
-import type { DataRow } from "../src/types";
+import { executeQuery, evaluateExpr } from "@dsql/executor";
+import { parseQuery } from "@dsql/parser";
+import type { DataRow } from "@dsql/types";
 import { exec, makeRow, rows } from "./helpers";
 
 let passed = 0;

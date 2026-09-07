@@ -1,6 +1,6 @@
 /* normalizeBoard 字段校形测试：viewType 优先级、viewOverride 兼容、type 自由保留。 */
 import assert from "node:assert/strict";
-import { isViewType, normalizeBoard } from "../src/types";
+import { isViewType, normalizeBoard } from "@dsql/types";
 
 let passed = 0;
 function test(name: string, fn: () => void): void {

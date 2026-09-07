@@ -1,6 +1,6 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type DatashowPlugin from "./main";
-import { IMPLEMENTED_VIEWS, VIEW_LABELS, makeBoardId, type BoardDef, type ViewType } from "./types";
+import { IMPLEMENTED_VIEWS, VIEW_LABELS, makeBoardId, type BoardDef, type ViewType } from "@dsql/types";
 
 /**
  * 插件设置页：

@@ -1,4 +1,4 @@
-import { EMPTY, type FieldValue } from "../types";
+import { EMPTY, type FieldValue } from "@dsql/types";
 
 /**
  * 内置函数注册表（6.4）。args 为已求值的参数。

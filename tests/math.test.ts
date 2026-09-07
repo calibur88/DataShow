@@ -1,9 +1,9 @@
 /* 数学示例测试：算术运算、乘方、比较、字符串连接、内置函数、非致命语义、UTF-8 字节序。 */
 import assert from "node:assert/strict";
-import { compareUtf8, evaluateExpr, executeQuery } from "../src/query/executor";
-import { EMPTY, type FieldValue } from "../src/types";
+import { compareUtf8, evaluateExpr, executeQuery } from "@dsql/executor";
+import { EMPTY, type FieldValue } from "@dsql/types";
 import { makeRow, exec } from "./helpers";
-import { parseQuery } from "../src/query/parser";
+import { parseQuery } from "@dsql/parser";
 
 let passed = 0;
 function test(name: string, fn: () => void): void {

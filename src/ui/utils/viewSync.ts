@@ -13,7 +13,7 @@
  * - 字符串字面量 '**TABLE_VIEW**' 不参与关键词识别（readMarked 只在 ** 包裹的 token 中匹配）
  * - 注入位置：前导空白/注释行**之后**第一个 ** 之前（保证首 token 仍是视图关键词）
  */
-import type { BoardDef, ViewType } from "../types";
+import type { BoardDef, ViewType } from "@dsql/types";
 
 const VIEW_KEYWORDS: ViewType[] = ["TABLE_VIEW", "LIST_VIEW", "CARD_VIEW"];
 /** 旧词也算"已有关键词"——一并替换为 type，避免下次解析报错 */

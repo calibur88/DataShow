@@ -26,6 +26,11 @@ try {
     absWorkingDir: root,
     outfile,
     logLevel: "silent",
+    alias: {
+      "@dsql": path.join(root, "src", "dsql"),
+      "@index": path.join(root, "src", "index"),
+      "@ui": path.join(root, "src", "ui"),
+    },
   });
 } catch (err) {
   console.error("[test] 打包失败:", err?.message ?? err);

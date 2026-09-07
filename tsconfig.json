@@ -1,6 +1,11 @@
 {
   "compilerOptions": {
     "baseUrl": ".",
+    "paths": {
+      "@dsql/*": ["src/dsql/*"],
+      "@index/*": ["src/index/*"],
+      "@ui/*": ["src/ui/*"]
+    },
     "inlineSourceMap": true,
     "inlineSources": true,
     "module": "ESNext",

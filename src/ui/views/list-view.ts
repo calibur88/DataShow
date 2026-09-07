@@ -8,8 +8,8 @@
  * v2.0 改动：删除原"点击条目打开 frontmatter 弹窗"的内联编辑语义，
  * 改为"点击文件名/行 → 打开笔记"，与 TableView / CardView 行为一致。
  */
-import { evaluateExpr, type ResultSet } from "../query/executor";
-import type { DataRow } from "../types";
+import { evaluateExpr, type ResultSet } from "@dsql/executor";
+import type { DataRow } from "@dsql/types";
 
 export interface ListViewArgs {
   result: ResultSet;

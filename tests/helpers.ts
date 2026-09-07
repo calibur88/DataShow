@@ -1,8 +1,8 @@
 /* 测试共享工具：行构造 + 基础数据集（node 环境，无 Obsidian 依赖）。 */
 import path from "node:path";
-import { executeQuery } from "../src/query/executor";
-import { parseQuery } from "../src/query/parser";
-import type { DataRow } from "../src/types";
+import { executeQuery } from "@dsql/executor";
+import { parseQuery } from "@dsql/parser";
+import type { DataRow } from "@dsql/types";
 
 /** 测试库根目录：固定指向本地测试库 test-vault-local（干净提交库 test-vault 不参与测试）。 */
 export const TEST_VAULT_ROOT: string = path.resolve(process.cwd(), "test-vault-local");

@@ -1,11 +1,11 @@
 /* 摄取层测试：frontmatter 重复键剔除、摄取归一（"" / [] → null，未赋值 → EMPTY 值）、摄取警告输出。 */
 import assert from "node:assert/strict";
-import { findDuplicateKeys } from "../src/index/frontmatter";
-import { buildRow } from "../src/index/row-builder";
-import { DataStore, type IngestWarning } from "../src/index/store";
-import { executeQuery } from "../src/query/executor";
-import { parseQuery } from "../src/query/parser";
-import { EMPTY, type DataRow } from "../src/types";
+import { findDuplicateKeys } from "@index/frontmatter";
+import { buildRow } from "@index/row-builder";
+import { DataStore, type IngestWarning } from "@index/store";
+import { executeQuery } from "@dsql/executor";
+import { parseQuery } from "@dsql/parser";
+import { EMPTY, type DataRow } from "@dsql/types";
 import { makeRow } from "./helpers";
 
 let passed = 0;

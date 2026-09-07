@@ -1,6 +1,6 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
 import type DatashowPlugin from "../main";
-import { SIDEBAR_VIEW_TYPE } from "../types";
+import { SIDEBAR_VIEW_TYPE } from "@dsql/types";
 
 /**
  * 侧栏视图：展示插件设置中定义的看板（按看板类型分组），

@@ -1,3 +1,417 @@
-# TODO
+## 📁 目标目录结构
 
-（DSQL v2.0 升级已全部落地，暂无待办。）
+```
+src/
+├── dsql/                      # DSQL 语言层（零 Obsidian 依赖）
+│   ├── types.ts               # 原 src/types.ts
+│   ├── ast.ts
+│   ├── executor.ts
+│   ├── functions.ts
+│   ├── lexer.ts
+│   └── parser.ts
+│
+├── index/                     # 索引层（完全不变）
+│   ├── frontmatter.ts
+│   ├── row-builder.ts
+│   ├── scanner.ts
+│   └── store.ts
+│
+├── ui/                        # 视图层
+│   ├── panel.ts               # 原 views/panel.ts
+│   ├── sidebar.ts             # 原 views/sidebar.ts
+│   ├── views/
+│   │   ├── table-view.ts
+│   │   ├── list-view.ts
+│   │   ├── card-view.ts
+│   │   └── frontmatter-modal.ts
+│   └── utils/
+│       └── viewSync.ts        # 原 utils/viewSync.ts
+│
+├── main.ts
+└── settings.ts                # 保留在根目录，不拆分
+```
+
+
+## 🚫 铁律
+
+| # | 约束 |
+| :--- | :--- |
+| 1 | **不重写函数体逻辑**：仅允许清理未使用导入、合并重复类型 |
+| 2 | **不改 UI 行为**：DOM 结构、事件绑定、交互流程一字不改 |
+| 3 | **不改 `styles.css`** |
+| 4 | **不改个人信息**：`manifest.json`/`package.json` 的 `id`/`author`/`repo` 不动 |
+| 5 | **不改 DSQL 语法/语义** |
+| 6 | **可重写注释**：按规范补充 JSDoc、删除叙事注释 |
+| 7 | **可做代码清理**：删除未使用导入、合并重复类型、空 catch 加日志 |
+| 8 | **settings.ts 不拆分不移动**：留在根目录，仅改 import 路径 |
+| 9 | **统一 ID**：`'data_show'` / `'datashow-dev'` / `'data_show_test'` → `'data-show'`（不做向后兼容） |
+| 10 | **遇阻即停**：任何不确定是否允许的改动，立即暂停提问 |
+
+
+## 🔧 执行命令（提交一：目录迁移 + import 修正）
+
+### 第 0 步：迁移前检查
+
+在 **Git** 中执行：
+
+```bash
+cd E:\datashow
+
+# 检查 types.ts 是否依赖 obsidian
+grep -n "obsidian" src/types.ts
+
+# 确认工作区干净
+git status
+```
+
+### 第 1 步：新建目录
+
+```bash
+cd E:\datashow\src
+
+mkdir "ui\views"
+mkdir "ui\utils"
+```
+
+### 第 2 步：git mv（关键顺序）
+
+```bash
+# 2.1 重命名 query/ → dsql/
+git mv query dsql
+
+# 2.2 types.ts → dsql/
+git mv types.ts dsql/types.ts
+
+# 2.3 utils/viewSync.ts → ui/utils/
+git mv utils/viewSync.ts ui/utils/viewSync.ts
+
+# 2.4 删除空 utils/
+rmdir utils
+
+# 2.5 views/ → ui/
+git mv views/panel.ts ui/panel.ts
+git mv views/sidebar.ts ui/sidebar.ts
+git mv views/table-view.ts ui/views/table-view.ts
+git mv views/list-view.ts ui/views/list-view.ts
+git mv views/card-view.ts ui/views/card-view.ts
+git mv views/frontmatter-modal.ts ui/views/frontmatter-modal.ts
+
+# 2.6 删除空 views/
+rmdir views
+```
+
+
+## ⚙️ 配置路径别名
+
+### tsconfig.json
+
+```json
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@dsql/*": ["src/dsql/*"],
+      "@index/*": ["src/index/*"],
+      "@ui/*": ["src/ui/*"]
+    }
+  }
+}
+```
+
+### esbuild.config.mjs
+
+```javascript
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const buildOptions = {
+  // ... 其他配置
+  alias: {
+    '@dsql': path.resolve(__dirname, 'src/dsql'),
+    '@index': path.resolve(__dirname, 'src/index'),
+    '@ui': path.resolve(__dirname, 'src/ui'),
+  },
+};
+```
+
+### 测试框架（根据实际使用的框架配置）
+
+**如果使用 vitest**（在 `vitest.config.ts` 中）：
+
+```typescript
+import { defineConfig } from 'vitest/config';
+import path from 'path';
+
+export default defineConfig({
+  resolve: {
+    alias: {
+      '@dsql': path.resolve(__dirname, 'src/dsql'),
+      '@index': path.resolve(__dirname, 'src/index'),
+      '@ui': path.resolve(__dirname, 'src/ui'),
+    },
+  },
+});
+```
+
+**如果使用 jest**（在 `jest.config.js` 中）：
+
+```javascript
+module.exports = {
+  moduleNameMapper: {
+    '^@dsql/(.*)$': '<rootDir>/src/dsql/$1',
+    '^@index/(.*)$': '<rootDir>/src/index/$1',
+    '^@ui/(.*)$': '<rootDir>/src/ui/$1',
+  },
+};
+```
+
+**如果使用 ts-node / tsx 直接运行测试**：已有 `tsconfig.json` 的 `paths` 配置需配合 `tsconfig-paths` 使用：
+
+```bash
+npm install -D tsconfig-paths
+# 运行时：node -r tsconfig-paths/register ./scripts/test.mjs
+```
+
+
+## 🔄 替换 import 路径（VS Code 正则替换）
+
+### src/ 目录下替换
+
+在 `src/` 目录下，按顺序执行以下替换（启用正则表达式 `.*`）：
+
+| 查找模式 | 替换为 | 说明 |
+| :--- | :--- | :--- |
+| `from ['"][\.\/]+/types['"]` | `from '@dsql/types'` | 任意深度的 types 引用 |
+| `from ['"][\.\/]+/query/(\w+)['"]` | `from '@dsql/$1'` | query/xxx → @dsql/xxx |
+| `from ['"][\.\/]+/utils/viewSync['"]` | `from '@ui/utils/viewSync'` | viewSync 引用 |
+| `from ['"][\.\/]+/views/panel['"]` | `from '@ui/panel'` | panel 引用 |
+| `from ['"][\.\/]+/views/sidebar['"]` | `from '@ui/sidebar'` | sidebar 引用 |
+| `from ['"][\.\/]+/views/(\w+-view)['"]` | `from '@ui/views/$1'` | table/list/card-view |
+| `from ['"][\.\/]+/views/frontmatter-modal['"]` | `from '@ui/views/frontmatter-modal'` | frontmatter-modal |
+| `from ['"][\.\/]+/index/(\w+)['"]` | `from '@index/$1'` | index/xxx → @index/xxx |
+
+### tests/ 目录下替换（如有）
+
+在 `tests/` 目录下执行（启用正则表达式 `.*`）：
+
+| 查找模式 | 替换为 | 说明 |
+| :--- | :--- | :--- |
+| `from ['"][\.\/]+/src/query/(\w+)['"]` | `from '@dsql/$1'` | query/xxx |
+| `from ['"][\.\/]+/src/types['"]` | `from '@dsql/types'` | types |
+| `from ['"][\.\/]+/src/views/panel['"]` | `from '@ui/panel'` | panel（移到 ui/ 根） |
+| `from ['"][\.\/]+/src/views/sidebar['"]` | `from '@ui/sidebar'` | sidebar（移到 ui/ 根） |
+| `from ['"][\.\/]+/src/views/(\w+)[ '"]` | `from '@ui/views/$1'` | table-view/list-view/card-view/frontmatter-modal（移入 ui/views/） |
+
+
+## ✅ 提交一验收
+
+```bash
+# 目录结构
+tree /f src
+
+# 编译/构建/测试
+npx tsc --noEmit && npm run build && npm test
+
+# dsql 纯净性
+grep -r "from 'obsidian'" src/dsql/
+
+# 提交
+git add -A
+git commit -m "refactor: 迁移 src 目录为 dsql/index/ui 三层结构
+
+- query/ → dsql/，types.ts 移入 dsql/
+- views/ → ui/，utils/viewSync.ts → ui/utils/
+- 配置 tsconfig 路径别名 @dsql/@index/@ui
+- 全局修正 import 路径
+"
+```
+
+
+## 📝 提交二：注释规范 + 注释重写 + CONTRIBUTING.md 更新
+
+### 注释重写规范
+
+#### 1. 文件头注释（每个 `.ts` 文件顶部）
+
+```typescript
+/**
+ * @module ${目录}/${文件名}
+ * @description ${模块职责描述}
+ */
+```
+
+#### 2. 导出函数注释（所有导出函数/类）
+
+```typescript
+/**
+ * ${功能描述}
+ *
+ * @param ${参数名} - ${参数说明}
+ * @returns ${返回值说明}
+ */
+```
+
+#### 3. 必须删除的注释类型
+
+| 查找模式 | 操作 |
+| :--- | :--- |
+| `// 重构:` | 删除整行 |
+| `// 优化:` | 删除整行 |
+| `// 迁移:` | 删除整行 |
+| `// 本版本` | 删除整行 |
+| `@author` | 删除整行 |
+| `@created` | 删除整行 |
+| `@updated` | 删除整行 |
+| 注释掉的代码块 | 删除整段 |
+
+### CONTRIBUTING.md 新增注释规范章节
+
+在 `CONTRIBUTING.md` 的**第 8 节「代码编写规范」**之后，**新增第 9 节「注释规范」**，原有第 9 节及之后编号顺延。
+
+```markdown
+### 9. 注释规范
+
+注释的目的是解释 **“为什么”** ，而不是“是什么”。好代码本身应自解释其“是什么”和“怎么做”。
+
+#### 9.1 注释类型与使用场景
+
+| 注释类型 | 语法 | 使用场景 |
+| :--- | :--- | :--- |
+| **文件头** | `/** ... */` | 每个 `.ts` 文件顶部，说明模块职责 |
+| **函数注释** | `/** ... */` | 所有导出函数、类方法（公开 API） |
+| **行内注释** | `//` | 解释复杂逻辑、边界条件、临时方案 |
+| **TODO/FIXME** | `// TODO:` / `// FIXME:` | 标记待办事项或已知问题 |
+| **警示注释** | `// ⚠️` | 标记容易误用的 API 或危险操作 |
+
+#### 9.2 格式规范
+
+**文件头（必须）：**
+
+```typescript
+/**
+ * @module dsql/executor
+ * @description DSQL 执行器，按 FROM → WHERE → SORT → LIMIT → SELECT 管线执行查询
+ */
+```
+
+**函数注释（导出函数必须）：**
+
+```typescript
+/**
+ * 对卡片视图应用搜索过滤
+ *
+ * @param container - 卡片视图的根容器元素
+ * @param keyword - 搜索关键词（已 trim，非空）
+ * @returns 匹配的卡片数量
+ *
+ * @example
+ * ```ts
+ * const matched = applyCardFilter(container, '待办');
+ * ```
+ */
+export function applyCardFilter(container: HTMLElement, keyword: string): number {
+  // ...
+}
+```
+
+**必须包含：** `@param` 描述每个参数，`@returns` 描述返回值
+**可选包含：** `@example` 使用示例
+
+**行内注释：**
+
+```typescript
+// ✅ 好：解释“为什么”
+// empty 值需要特殊处理，因为它是“键存在但未赋值”的状态
+
+// ❌ 坏：重复代码本身
+// 将 card 的 display 设为 none
+card.style.display = 'none';
+```
+
+#### 9.3 绝对禁止的注释类型
+
+| 禁止类型 | ❌ 错误示例 |
+| :--- | :--- |
+| 重构说明 | `// 重构：将 query 目录重命名为 dsql` |
+| 优化说明 | `// 优化：拆分双目录为单目录` |
+| 迁移说明 | `// 从 data_show_test 迁移而来` |
+| 变更日志 | `// 2026-09-07: 新增搜索功能` |
+| 个人署名 | `// @author calibur88` |
+| 注释掉的代码 | `// if (oldView === 'TABLE') { ... }` |
+
+#### 9.4 语言要求
+
+- **注释正文使用中文**
+- **代码中的语法字符使用 ASCII 直引号**
+- **中文与英文/数字之间不加空格**
+```
+
+### ✅ 提交二验收
+
+```bash
+# 检查叙事注释（人工确认结果）
+grep -rn "^\s*//.*\(重构\|迁移\|本版本\)" src/ --include="*.ts"
+
+# 检查个人署名
+grep -rn "@author\|@created\|@updated" src/ --include="*.ts"
+
+# 检查注释掉的代码
+grep -rn "^[ \t]*//[ \t]*\(if\|for\|return\|const\|let\|var\|function\|class\|import\)" src/ --include="*.ts"
+
+# 提交
+git add -A
+git commit -m "docs: 按注释规范重写注释，更新 CONTRIBUTING.md
+
+- 新增 CONTRIBUTING.md 注释规范章节
+- 为所有 .ts 文件补充文件头注释 (@module + @description)
+- 为所有导出函数补充 JSDoc (@param + @returns)
+- 删除叙事注释、个人署名、注释掉的代码
+"
+```
+
+
+## 🔍 提交三：代码清理
+
+### 清理检查项
+
+| # | 检查项 | 操作 |
+| :--- | :--- | :--- |
+| 1 | 未使用的 import | 删除（IDE 自动高亮） |
+| 2 | 重复类型定义 | 合并到 `dsql/types.ts` |
+| 3 | 空 catch 块 | 加 `console.warn` 日志 |
+| 4 | **统一 ID**：`'data_show'` / `'datashow-dev'` / `'data_show_test'` | → `'data-show'`（不做向后兼容） |
+
+### ✅ 提交三验收
+
+```bash
+# 硬编码统一 ID（确认无残留）
+grep -rn "data_show\|datashow-dev" src/ --include="*.ts"
+# 期望：无输出
+
+# 编译/构建/测试
+npx tsc --noEmit && npm run build && npm test
+
+# 提交
+git add -A
+git commit -m "chore: 代码清理与统一 ID
+
+- 删除未使用的 import
+- 合并重复类型定义到 dsql/types.ts
+- 空 catch 块加 console.warn 日志
+- 统一 ID: data_show/datashow-dev/data_show_test → data-show
+"
+```
+## 在同步更新这两份文档
+-**API.md** 
+-**ARCHITECTURE.md** 
+
+## 📋 执行顺序总结
+
+| 提交 | 内容 | 验证 |
+| :--- | :--- | :--- |
+| **提交一** | 目录迁移 + import 修正 + 路径别名 | `tsc --noEmit && build && test` |
+| **提交二** | CONTRIBUTING.md 更新 + 注释重写 | `build` 不受影响，`grep` 验证 |
+| **提交三** | 代码清理（未使用 import、重复类型、空 catch、统一 ID） | `tsc --noEmit && build && test` |
+

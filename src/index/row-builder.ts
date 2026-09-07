@@ -1,5 +1,5 @@
 import type { TFile } from "obsidian";
-import { EMPTY, type DataRow, type FieldValue } from "../types";
+import { EMPTY, type DataRow, type FieldValue } from "@dsql/types";
 
 /**
  * 行构造：Obsidian metadataCache 的解析结果 → DataRow。

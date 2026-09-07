@@ -8,7 +8,7 @@
  */
 import type { BinOp, Expr, Query, Source } from "./ast";
 import { callFunction } from "./functions";
-import { EMPTY, type DataRow, type FieldValue, type ViewType } from "../types";
+import { EMPTY, type DataRow, type FieldValue, type ViewType } from "@dsql/types";
 
 /* ---------- 调试信息（6.6） ---------- */
 

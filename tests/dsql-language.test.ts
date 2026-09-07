@@ -1,8 +1,8 @@
 /* DSQL 语言示例测试：词法、语法结构、子句前件关系、错误报告。 */
 import assert from "node:assert/strict";
-import { executeQuery, evaluateExpr } from "../src/query/executor";
-import { parseQuery, QueryParseError } from "../src/query/parser";
-import type { ColumnSel } from "../src/query/ast";
+import { executeQuery, evaluateExpr } from "@dsql/executor";
+import { parseQuery, QueryParseError } from "@dsql/parser";
+import type { ColumnSel } from "@dsql/ast";
 import { exec } from "./helpers";
 
 let passed = 0;

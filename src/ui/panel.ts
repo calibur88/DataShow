@@ -1,11 +1,11 @@
 import { ItemView, WorkspaceLeaf, TFile } from "obsidian";
 import type DatashowPlugin from "../main";
-import { executeQuery, type QueryDebug, type ResultSet } from "../query/executor";
-import { parseQuery, QueryParseError } from "../query/parser";
-import { renderTableView } from "./table-view";
-import { renderListView } from "./list-view";
-import { renderCardView } from "./card-view";
-import { applyViewType, detectTypeFromSql } from "../utils/viewSync";
+import { executeQuery, type QueryDebug, type ResultSet } from "@dsql/executor";
+import { parseQuery, QueryParseError } from "@dsql/parser";
+import { renderTableView } from "@ui/views/table-view";
+import { renderListView } from "@ui/views/list-view";
+import { renderCardView } from "@ui/views/card-view";
+import { applyViewType, detectTypeFromSql } from "@ui/utils/viewSync";
 import {
   IMPLEMENTED_VIEWS,
   PANEL_VIEW_TYPE,
@@ -15,7 +15,7 @@ import {
   type FieldValue,
   type PanelViewState,
   type ViewType,
-} from "../types";
+} from "@dsql/types";
 
 /**
  * 主工作区看板面板（v2.0）：

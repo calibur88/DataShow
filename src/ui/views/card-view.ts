@@ -14,8 +14,8 @@
  * 该字段可编辑。其余情况（含别名 AS 派生、TOTAL 聚合、变量引用、函数调用、
  * 算术/比较表达式）一律只读。
  */
-import { evaluateExpr, type ResultSet } from "../query/executor";
-import type { DataRow, FieldValue } from "../types";
+import { evaluateExpr, type ResultSet } from "@dsql/executor";
+import type { DataRow, FieldValue } from "@dsql/types";
 
 export interface CardViewArgs {
   result: ResultSet;

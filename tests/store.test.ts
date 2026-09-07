@@ -1,7 +1,7 @@
 /* DataStore 冒烟测试（纯 TS，无 Obsidian 依赖）。 */
 import assert from "node:assert/strict";
-import { DataStore } from "../src/index/store";
-import type { DataRow } from "../src/types";
+import { DataStore } from "@index/store";
+import type { DataRow } from "@dsql/types";
 
 function row(path: string): DataRow {
   return {

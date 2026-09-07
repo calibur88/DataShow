@@ -30,6 +30,11 @@ const context = await esbuild.context({
   treeShaking: true,
   absWorkingDir: here,
   outfile: OUT_FILE,
+  alias: {
+    "@dsql": path.resolve(here, "src", "dsql"),
+    "@index": path.resolve(here, "src", "index"),
+    "@ui": path.resolve(here, "src", "ui"),
+  },
 });
 
 /** 把构建产物与插件元文件同步到各个测试库的插件目录。 */

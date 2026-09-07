@@ -19,3 +19,7 @@ test-vault-local/
 # 系统与编辑器杂项
 Thumbs.db
 .DS_Store
+
+# 临时目录清单
+dir.txt
+back/

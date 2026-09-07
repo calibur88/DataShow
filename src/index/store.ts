@@ -1,4 +1,4 @@
-import type { DataRow } from "../types";
+import type { DataRow } from "@dsql/types";
 
 /** 摄取期容错警告（DSQL 1.5）：如重复键剔除。按文件路径归档，随查询调试信息一并输出。 */
 export interface IngestWarning {

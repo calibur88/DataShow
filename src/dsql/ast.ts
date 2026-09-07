@@ -1,6 +1,6 @@
 /** DSQL v2.0 AST。 */
 
-import type { ViewType } from "../types";
+import type { ViewType } from "@dsql/types";
 
 export type BinOp =
   | "==" | "!=" | ">" | "<" | ">=" | "<="   // 比较
@@ -18,7 +18,7 @@ export type Expr =
 
 export interface LitExpr {
   kind: "lit";
-  value: import("../types").FieldValue;
+  value: import("@dsql/types").FieldValue;
 }
 
 export interface FieldExpr {
@@ -88,7 +88,7 @@ export interface SortKey {
   /** 键级方向；null = 用子句级方向 */
   dir: "asc" | "desc" | null;
   /** 自定义优先级值列表（**SORT** 键 **BY** (...)），作用于本键 */
-  priority: import("../types").FieldValue[] | null;
+  priority: import("@dsql/types").FieldValue[] | null;
 }
 
 export interface SortClause {

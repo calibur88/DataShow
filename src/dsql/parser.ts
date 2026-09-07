@@ -10,7 +10,7 @@
  */
 import type { BinOp, ColumnSel, Expr, Query, SortClause, SortKey, Source } from "./ast";
 import { FUNCTIONS, KEYWORDS, Lexer, type Token } from "./lexer";
-import type { FieldValue, ViewType } from "../types";
+import type { FieldValue, ViewType } from "@dsql/types";
 
 export class QueryParseError extends Error {
   constructor(
