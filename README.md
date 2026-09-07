@@ -25,6 +25,7 @@
 **其他文档**：
 
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) —— 整体架构、双目录工作流与开发/测试说明（先读这份）；
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) —— 开发 / 更新 / 文档编写 / git 提交规范；
 - [`data_show/docs/DSQL-EBNF.md`](data_show/docs/DSQL-EBNF.md) —— DSQL v2.0 权威语法规范（含视图三关键词、三值语义、别名唯一性与摄取容错）；
 - [`.zcode/plans/history.md`](.zcode/plans/history.md) —— AI 会话计划归档（均已随 1.6.0/1.7.0 落地）。
 

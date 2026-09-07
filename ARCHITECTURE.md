@@ -118,6 +118,7 @@ esbuild 配置自动同步进各自 vault，无需手工拷贝。
 | 文档 | 位置 | 说明 |
 |---|---|---|
 | 工作区总说明 | [README.md](README.md) | 双目录结构、版本规则、快速开始 |
+| 开发规范 | [CONTRIBUTING.md](CONTRIBUTING.md) | 开发 / 更新 / 文档编写 / git 提交规范 |
 | API 参考 | [API.md](API.md) | Obsidian 官方 API + 插件 API（基于 2.0.0，minAppVersion 1.4.4） |
 | DSQL 规范 | [`data_show/docs/DSQL-EBNF.md`](data_show/docs/DSQL-EBNF.md) | DSQL v2.0 权威语法规范（EBNF + 语义） |
 | 正式版日志 | [`data_show/CHANGELOG.md`](data_show/CHANGELOG.md) | 从简 |
