@@ -73,8 +73,17 @@ export class DatashowSidebarView extends ItemView {
       groups.set(key, list);
     }
 
+    // 清理不存在的折叠记录：分组重命名 / 删除后，旧的折叠名变成死数据
+    const existingTypes = new Set(groups.keys());
+    const cleaned = this.plugin.settings.collapsedGroups.filter((t) => existingTypes.has(t));
+    if (cleaned.length !== this.plugin.settings.collapsedGroups.length) {
+      this.plugin.settings.collapsedGroups = cleaned;
+      void this.plugin.saveSettings();
+    }
+    const collapsedSet = new Set(cleaned);
+
     for (const [type, items] of groups) {
-      const collapsed = this.plugin.settings.collapsedGroups.includes(type);
+      const collapsed = collapsedSet.has(type);
       const section = root.createDiv({
         cls: collapsed ? "datashow-sidebar__section is-collapsed" : "datashow-sidebar__section",
       });

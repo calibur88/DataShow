@@ -602,3 +602,10 @@ tr:hover .datashow-row-edit,
   font-size: 12px;
   width: 100%;
 }
+
+/* 卡片字段保存错误提示（卡片内联编辑失败时显示，3 秒后自动恢复） */
+.datashow-card__field-error {
+  color: var(--text-error, #e06c75);
+  font-size: 0.85em;
+  font-weight: 500;
+}

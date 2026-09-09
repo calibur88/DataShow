@@ -21,6 +21,29 @@
 - 仅改 `main.ts` 的 `openBoard`，无设置 / 数据结构变更，旧 `data.json` 无需迁移；
 - 验收：`tsc --noEmit` 零错误，106 例单元测试全部通过。
 
+**结果区标签页保留**：索引自动刷新不再强制切回「查询结果」。
+
+- `renderResult` 新增 `keepTab` 参数（默认 `false`）：
+  `true` 保留当前标签页状态，`false` 强制切到「查询结果」；
+- `onOpen` 中的 `store.subscribe` 改为 `renderResult(true)`，
+  metadataCache 触发的自动刷新不再打断用户停留的「调试信息」标签；
+- 工具条「刷新」按钮与 `render()` 中创建结果区时仍使用 `renderResult(false)`，
+  这两类主动操作按预期重置回结果页。
+
+**折叠分组死数据清理**：侧栏重渲染时丢弃不存在的折叠名。
+
+- 分组集合变化（看板类型被重命名 / 删除 / 合并）后，旧的 `collapsedGroups`
+  条目不再指向任何分组，按存在性过滤后写回 `data.json`；
+- 避免「折叠状态永远找不到对应分组」导致的脏数据；现有用户无需手动迁移。
+
+**卡片字段保存错误可视化**：保存失败时给出可读错误并自动恢复。
+
+- `panel.saveFrontmatterField`：文件不存在或非 Markdown 时改为 `throw`，
+  不再静默返回（之前调用方 `onSaveField` 完全无感，掩盖了索引漂移问题）；
+- `card-view.beginFieldEdit` 捕获错误 → 渲染为 `⚠️ ...` 红色提示
+  （`.datashow-card__field-error`，3 秒后自动恢复原值）；
+- 成功路径保持原行为（清空编辑态、显示原值）。
+
 ### DSQL 更新
 
 本次无 DSQL 语法 / 语义变更。

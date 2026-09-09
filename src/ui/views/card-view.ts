@@ -221,13 +221,24 @@ function beginFieldEdit(
     valueEl.empty();
     valueEl.setText(original);
   };
+
+  const showError = (err: unknown): void => {
+    const msg = err instanceof Error ? err.message : String(err);
+    valueEl.empty();
+    valueEl.createSpan({ text: `⚠️ ${msg}`, cls: "datashow-card__field-error" });
+    setTimeout(cancel, 3000);
+  };
+
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
       const value = parseFieldInput(input.value);
       Promise.resolve(onSaveField(row, path, value))
-        .catch((err) => console.error("[DataShow] 卡片字段保存失败", err))
-        .finally(cancel);
+        .then(() => cancel())
+        .catch((err) => {
+          console.error("[DataShow] 卡片字段保存失败", err);
+          showError(err);
+        });
     } else if (e.key === "Escape") {
       e.preventDefault();
       cancel();

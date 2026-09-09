@@ -82,7 +82,7 @@ export class DatashowPanelView extends ItemView {
   /** 打开面板：订阅数据与看板变更，并首次渲染。 */
   async onOpen(): Promise<void> {
     this.unsubBoards = this.plugin.addBoardListener(() => this.onExternalChange());
-    this.unsubStore = this.plugin.store.subscribe(() => this.renderResult());
+    this.unsubStore = this.plugin.store.subscribe(() => this.renderResult(true));
     if (this.state) await this.render();
   }
 
@@ -178,7 +178,7 @@ export class DatashowPanelView extends ItemView {
     toolbar.createDiv({ cls: "datashow-toolbar__spacer" });
     toolbar
       .createEl("button", { cls: "datashow-toolbar__btn", text: "刷新" })
-      .addEventListener("click", () => this.renderResult());
+      .addEventListener("click", () => this.renderResult(false));
     toolbar.createSpan({ cls: "datashow-toolbar__label", text: "视图" });
     const select = toolbar.createEl("select", { cls: "datashow-toolbar__select" }) as HTMLSelectElement;
     // R6 下拉选项：跟随语句 / 表格 / 列表 / 卡片
@@ -211,7 +211,7 @@ export class DatashowPanelView extends ItemView {
 
     // ---- 结果区（独立刷新） ----
     this.resultWrap = root.createDiv({ cls: "datashow-result" });
-    this.renderResult();
+    this.renderResult(false);
   }
 
   /** 编辑防抖自动保存。 */
@@ -250,11 +250,19 @@ export class DatashowPanelView extends ItemView {
   /** 当前结果区标签页（每次重跑回到「查询结果」）。 */
   private resultTab: "result" | "debug" = "result";
 
-  /** 只重跑查询结果区（不动编辑器）。 */
-  private renderResult(): void {
+  /**
+   * 只重跑查询结果区（不动编辑器）。
+   * @param keepTab - true 时保留当前标签页状态；false 时强制切到「查询结果」
+   */
+  private renderResult(keepTab: boolean = false): void {
     if (!this.resultWrap || !this.resultWrap.isShown()) return;
     const board = this.currentBoard();
     if (!board) return;
+
+    // 仅当不保留时才重置为结果页（看板切换或手动刷新）
+    if (!keepTab) {
+      this.resultTab = "result";
+    }
 
     const wrap = this.resultWrap;
     wrap.empty();
@@ -414,14 +422,19 @@ export class DatashowPanelView extends ItemView {
     }
   }
 
-  /** 卡片字段保存：调 processFrontMatter 原子写回，索引增量更新由 metadataCache 事件触发 */
+  /**
+   * 卡片字段保存：调 processFrontMatter 原子写回，索引增量更新由 metadataCache 事件触发
+   * @throws 当文件不存在或非 Markdown 文件时抛出错误
+   */
   private async saveFrontmatterField(row: DataRow, fieldPath: string, value: FieldValue): Promise<void> {
     const f = this.app.vault.getFileByPath(row.path);
-    if (!(f instanceof TFile) || f.extension !== "md") return;
+    if (!(f instanceof TFile) || f.extension !== "md") {
+      throw new Error(`文件 "${row.path}" 不存在或不是 Markdown 文件，无法保存。`);
+    }
     await this.app.fileManager.processFrontMatter(f, (fm) => {
       fm[fieldPath] = value;
     });
-    // 不主动 renderResult：processFrontMatter 触发 metadataCache 变更 → store 通知 → renderResult 自动重跑
+    // 成功：由 metadataCache 事件触发重渲染
   }
 
   /** 调试信息（逐操作 + 字段缺失 + 警告 + 数据源统计 + 耗时） */
