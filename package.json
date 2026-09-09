@@ -1,6 +1,6 @@
 {
   "name": "data-show",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "description": "Metadata boards for Obsidian: index note properties, query them with DSQL and render table/list/card views.",
   "main": "dist/main.js",
   "scripts": {

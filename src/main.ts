@@ -117,7 +117,12 @@ export default class DatashowPlugin extends Plugin {
   }
 
   /**
-   * 在主工作区打开看板面板（新标签页或复用已有面板标签）。
+   * 在主工作区打开看板面板。
+   *
+   * 打开策略（避免重复点击导致标签页 / 面板无限堆积）：
+   * 同一看板已打开时直接聚焦已有标签页；复用模式下优先复用已有面板标签
+   * 或当前活动标签页（getLeaf(false)，仅在必要时才切分）；
+   * 仅当「新标签页打开」且该看板尚未打开时才新建标签页。
    *
    * @param boardId - 目标看板 id
    */
@@ -125,16 +130,27 @@ export default class DatashowPlugin extends Plugin {
     const { workspace } = this.app;
     const state: PanelViewState = { boardId };
 
-    if (!this.settings.openInNewTab) {
-      const existing = workspace.getLeavesOfType(PANEL_VIEW_TYPE)[0];
-      if (existing) {
-        await existing.setViewState({ type: PANEL_VIEW_TYPE, active: true, state });
-        await workspace.revealLeaf(existing);
-        return;
-      }
+    // 同一看板已在某标签页打开：直接聚焦并同步状态，不再新建。
+    const existing = workspace
+      .getLeavesOfType(PANEL_VIEW_TYPE)
+      .find((leaf) => (leaf.view.getState() as PanelViewState | null)?.boardId === boardId);
+    if (existing) {
+      await existing.setViewState({ type: PANEL_VIEW_TYPE, active: true, state });
+      await workspace.revealLeaf(existing);
+      return;
     }
 
-    const leaf: WorkspaceLeaf = workspace.getLeaf(this.settings.openInNewTab ? "tab" : false);
+    if (!this.settings.openInNewTab) {
+      // 复用模式：已有面板标签则就地切换看板，否则复用当前活动标签页。
+      const leaf: WorkspaceLeaf =
+        workspace.getLeavesOfType(PANEL_VIEW_TYPE)[0] ?? workspace.getLeaf(false);
+      await leaf.setViewState({ type: PANEL_VIEW_TYPE, active: true, state });
+      await workspace.revealLeaf(leaf);
+      return;
+    }
+
+    // 新标签页模式：上方复用检查已保证该看板未打开，此处才真正新建。
+    const leaf: WorkspaceLeaf = workspace.getLeaf("tab");
     await leaf.setViewState({ type: PANEL_VIEW_TYPE, active: true, state });
     await workspace.revealLeaf(leaf);
   }
