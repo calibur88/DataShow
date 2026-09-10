@@ -4,6 +4,7 @@
  */
 
 import assert from "node:assert/strict";
+import type { IFileMeta } from "@host/types";
 import { findDuplicateKeys } from "@index/frontmatter";
 import { buildRow } from "@index/row-builder";
 import { DataStore, type IngestWarning } from "@index/store";
@@ -19,14 +20,15 @@ function test(name: string, fn: () => void): void {
   console.log(`  ✓ ${name}`);
 }
 
-const fakeFile = (path: string): never =>
-  ({
-    path,
-    basename: path.split("/").pop()!.replace(/\.md$/, ""),
-    extension: "md",
-    parent: { path: path.split("/").slice(0, -1).join("/") || "/" },
-    stat: { size: 1, ctime: 1, mtime: 1 },
-  }) as never;
+const fakeFile = (path: string): IFileMeta => ({
+  path,
+  basename: path.split("/").pop()!.replace(/\.md$/, ""),
+  folder: path.split("/").slice(0, -1).join("/"),
+  ext: "md",
+  size: 1,
+  ctime: 1,
+  mtime: 1,
+});
 
 /* ---------- 重复键检测（纯函数） ---------- */
 

@@ -21,7 +21,25 @@
 - 工程为**单一插件工程**：源码、测试、脚本、文档、演示库都在根目录，插件 ID 统一为 `data-show`；
 - `test-vault-local/` 用于**本地验收**，不入库；`test-vault/` 是**干净提交库**，不用于日常测试；
 - 构建产物（`dist/main.js` 与同步进两个测试库的部署副本）不入库；
-  看板定义 `data.json` 是核心资产，**必须入库**。
+  看板定义 `data.json` 是核心资产，**必须入库**；
+- `src/` 按 host 依赖模式分层，新增代码必须落在下列目录之一：
+
+| 目录 | 职责 | 可 `import "obsidian"` |
+|---|---|---|
+| `src/host/types.ts` | 宿主接口与依赖契约的唯一出口（纯类型） | ❌ |
+| `src/host/obsidian/` | 宿主适配器（vault / opener / frontmatter / yaml / storage / ui） | ✅ |
+| `src/core/dsql/` | DSQL 语言层（别名 `@dsql`；独立 tsconfig，可独立发版） | ❌ |
+| `src/core/index/` | 行仓库、行构造、frontmatter 扫描（别名 `@index`） | ❌ |
+| `src/controller/` | 索引器：宿主事件 → 行仓库 | ❌ |
+| `src/render/` | 纯 UI：面板、侧栏、三视图 | ❌ |
+| `src/views/` | Obsidian 视图壳与设置页、视图类型常量 | ✅ |
+| `src/settings/` | 设置与看板内容的形状、默认值、校形迁移 | ❌ |
+| `src/utils/` | 与业务无关的纯工具 | ❌ |
+| `src/main.ts` | 只做装配（new 适配器 → 注入 → 注册） | ✅ |
+
+- 跨层引用一律走路径别名：`@dsql` / `@index` / `@host` / `@controller` / `@render` /
+  `@views` / `@settings` / `@utils`，三处同构配置（`tsconfig.json`、`esbuild.config.mjs`、
+  `scripts/test.mjs`），新增别名必须三处同步。
 
 ## 3. 版本号规则
 
@@ -51,7 +69,7 @@ npm run build   # 类型检查 + 生产构建
 2. `npm test` + `npm run build` 通过后，用 Obsidian 打开 `test-vault-local/` 实际验收；
 3. 验收通过后更新 CHANGELOG 与相关文档，再提交 git。
 
-> 验证看板 SQL 不能直接用 `node` 跑 TS：`src/dsql/parser.ts` 用了参数属性，
+> 验证看板 SQL 不能直接用 `node` 跑 TS：`src/core/dsql/parser.ts` 用了参数属性，
 > 必须经 esbuild 打包（见 `scripts/test.mjs`）。
 
 ## 5. 文档更新规范（变更时必须同步的清单）
@@ -122,13 +140,24 @@ npm run build   # 类型检查 + 生产构建
 
 ## 7. 代码编写规范
 
-- **类型出口唯一**：共享类型与常量统一定义在 `src/dsql/types.ts`，禁止各文件散落重复定义；
-- **`src/dsql/` 零 Obsidian 依赖**：不 import `obsidian`，保证可在 Node 独立测试；
-  该目录的词法 / 语法 / 执行逻辑改动必须同步 [docs/DSQL-语言规范.md](docs/DSQL-语言规范.md) 与测试；
-- **视图组件为纯 TS 工厂函数**：`src/ui/views/*-view.ts` 导出 `renderXxxView(...): HTMLElement`，
-  不引入前端框架（无 Svelte / React）；新视图类型在 `src/ui/panel.ts` 的 `renderResultByView` 分派；
-- **归一 / 校形**：看板字段校形在 `normalizeBoard`（`src/dsql/types.ts`）完成；
-  视图双向同步工具在 `src/ui/utils/viewSync.ts`（纯函数，可独立测试）；
+- **类型出口两处，互不重复**：宿主接口与依赖契约统一定义在 `src/host/types.ts`；
+  语言层类型统一定义在 `src/core/dsql/types.ts`（`DataRow` / `FieldValue` / `EMPTY` / `ViewType`）；
+  禁止各文件散落重复定义；
+- **零宿主依赖**：`src/core/`（含 `dsql/`）、`src/controller/`、`src/settings/`、`src/utils/`
+  一律不 import `obsidian`，保证可在 Node 独立测试；
+  DSQL 词法 / 语法 / 执行逻辑改动必须同步 [docs/DSQL-语言规范.md](docs/DSQL-语言规范.md) 与测试；
+- **`import "obsidian"` 只有三处合法**：`src/main.ts`、`src/views/`、`src/host/obsidian/`；
+  其余目录出现即视为架构违规；
+- **依赖注入，不反向依赖**：`render/` 只吃 `PanelDeps` / `SidebarDeps`，`views/` 只吃插件装配好的契约，
+  任何层都不得 `import` 插件主类（`main.ts`）；
+- **宿主能力走接口**：新增宿主能力（读写文件、打开、提示、持久化等）先在 `host/types.ts` 声明接口，
+  再在 `host/obsidian/` 实现，`main.ts` 装配注入，业务层不得直接调用宿主 API；
+- **视图组件为纯 TS 工厂函数**：`src/render/*-view.ts` 导出 `renderXxxView(...): HTMLElement`
+  或 `createXxxController(...)`，不引入前端框架（无 Svelte / React）；新视图类型在
+  `src/render/panel-view.ts` 的 `renderResultByView` 分派；
+- **归一 / 校形**：看板字段校形在 `normalizeBoard`（`src/settings/normalize.ts`）完成；
+  整块设置校形在 `normalizeSettings`（同上）；
+  视图双向同步工具在 `src/utils/viewSync.ts`（纯函数，可独立测试）；
 - **非致命语义**：类型不匹配、除零、字段缺失等运行期问题一律求值为 null 并计入 `warnings`，
   不中断查询；只有词法 / 语法错误才是致命错误；
 - **注释与文档用中文**；代码语法字符（引号、路径、键名）用 ASCII 直引号；

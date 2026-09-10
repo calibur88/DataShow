@@ -1,59 +1,41 @@
 /**
- * @module ui/sidebar
- * @description 看板侧栏：按分类分组展示看板清单，点击在主工作区打开面板
+ * @module render/sidebar-view
+ * @description 侧栏渲染：按分类分组展示看板清单，点击在主工作区打开面板（纯 UI，只吃 SidebarDeps）
  */
 
-import { ItemView, WorkspaceLeaf } from "obsidian";
-import type DatashowPlugin from "../main";
-import { SIDEBAR_VIEW_TYPE } from "@dsql/types";
+import type { SidebarDeps } from "@host/types";
+import type { BoardDef } from "@settings/schema";
+
+/** 侧栏控制器：视图壳持有并驱动其生命周期 */
+export interface SidebarController {
+  /** 首次渲染并订阅看板变更 */
+  mount(): void;
+  /** 重绘看板清单 */
+  render(): void;
+  /** 退订看板变更 */
+  dispose(): void;
+}
 
 /**
- * 侧栏视图：展示插件设置中定义的看板（按看板类型分组），
- * 点击看板在主工作区打开其面板。
+ * 创建侧栏控制器。
+ *
+ * @param root - 宿主容器（由视图壳提供，如 ItemView.contentEl）
+ * @param isVisible - 容器可见性判定（由视图壳提供）
+ * @param deps - 侧栏依赖契约
+ * @returns 侧栏控制器
  */
-export class DatashowSidebarView extends ItemView {
-  private plugin: DatashowPlugin;
+export function createSidebarController(
+  root: HTMLElement,
+  isVisible: () => boolean,
+  deps: SidebarDeps,
+): SidebarController {
+  let unsubBoards: (() => void) | null = null;
 
-  constructor(leaf: WorkspaceLeaf, plugin: DatashowPlugin) {
-    super(leaf);
-    this.plugin = plugin;
-  }
-
-  getViewType(): string {
-    return SIDEBAR_VIEW_TYPE;
-  }
-
-  getDisplayText(): string {
-    return "DataShow 看板";
-  }
-
-  getIcon(): string {
-    return "layout-dashboard";
-  }
-
-  /** 打开侧栏：渲染看板清单并订阅看板变化。 */
-  async onOpen(): Promise<void> {
-    this.render();
-    // 设置中的看板变化时刷新。
-    this.unsubBoards = this.plugin.addBoardListener(() => {
-      if (this.contentEl.isShown()) this.render();
-    });
-  }
-
-  /** 关闭侧栏：退订并清空 DOM。 */
-  async onClose(): Promise<void> {
-    this.unsubBoards?.();
-    this.contentEl.empty();
-  }
-
-  private unsubBoards: (() => void) | null = null;
-
-  private render(): void {
-    const root = this.contentEl;
+  function render(): void {
     root.empty();
     root.addClass("datashow-sidebar");
 
-    const boards = this.plugin.settings.boards;
+    const boards = deps.settings().boards;
     if (boards.length === 0) {
       const empty = root.createDiv({ cls: "datashow-sidebar__empty" });
       empty.createDiv({ text: "暂无看板" });
@@ -65,7 +47,7 @@ export class DatashowSidebarView extends ItemView {
     }
 
     // 按看板类型分组；无类型归入「未分类」。
-    const groups = new Map<string, typeof boards>();
+    const groups = new Map<string, BoardDef[]>();
     for (const board of boards) {
       const key = board.type.trim() || "未分类";
       const list = groups.get(key) ?? [];
@@ -74,11 +56,12 @@ export class DatashowSidebarView extends ItemView {
     }
 
     // 清理不存在的折叠记录：分组重命名 / 删除后，旧的折叠名变成死数据
+    const settings = deps.settings();
     const existingTypes = new Set(groups.keys());
-    const cleaned = this.plugin.settings.collapsedGroups.filter((t) => existingTypes.has(t));
-    if (cleaned.length !== this.plugin.settings.collapsedGroups.length) {
-      this.plugin.settings.collapsedGroups = cleaned;
-      void this.plugin.saveSettings();
+    const cleaned = settings.collapsedGroups.filter((t) => existingTypes.has(t));
+    if (cleaned.length !== settings.collapsedGroups.length) {
+      settings.collapsedGroups = cleaned;
+      void deps.saveSettings();
     }
     const collapsedSet = new Set(cleaned);
 
@@ -97,11 +80,11 @@ export class DatashowSidebarView extends ItemView {
         const nowCollapsed = !section.hasClass("is-collapsed");
         section.toggleClass("is-collapsed", nowCollapsed);
         header.setAttribute("aria-expanded", String(!nowCollapsed));
-        const set = new Set(this.plugin.settings.collapsedGroups);
+        const set = new Set(deps.settings().collapsedGroups);
         if (nowCollapsed) set.add(type);
         else set.delete(type);
-        this.plugin.settings.collapsedGroups = [...set];
-        void this.plugin.saveSettings();
+        deps.settings().collapsedGroups = [...set];
+        void deps.saveSettings();
       });
 
       const list = section.createDiv({ cls: "datashow-sidebar__list" });
@@ -109,8 +92,23 @@ export class DatashowSidebarView extends ItemView {
         const item = list.createDiv({ cls: "datashow-sidebar__item" });
         item.createSpan({ cls: "datashow-sidebar__item-icon", text: "▤" });
         item.createSpan({ text: board.name || "（未命名看板）" });
-        item.addEventListener("click", () => this.plugin.openBoard(board.id));
+        item.addEventListener("click", () => void deps.openBoard(board.id));
       }
     }
   }
+
+  return {
+    mount(): void {
+      render();
+      // 设置中的看板变化时刷新。
+      unsubBoards = deps.onBoardsChange(() => {
+        if (isVisible()) render();
+      });
+    },
+    render,
+    dispose(): void {
+      unsubBoards?.();
+      unsubBoards = null;
+    },
+  };
 }

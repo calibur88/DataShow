@@ -15,7 +15,13 @@
  * - 注入位置：前导空白/注释行**之后**第一个 ** 之前（保证首 token 仍是视图关键词）
  */
 
-import type { BoardDef, ViewType } from "@dsql/types";
+import type { ViewType } from "@dsql/types";
+
+/** 承载 SQL 与视图覆盖的最小结构（BoardDef 满足本形状，utils 层因此无需依赖 settings） */
+export interface SqlViewCarrier {
+  sql: string;
+  viewType: ViewType | "";
+}
 
 const VIEW_KEYWORDS: ViewType[] = ["TABLE_VIEW", "LIST_VIEW", "CARD_VIEW"];
 /** 旧词也算"已有关键词"——一并替换为 type，避免下次解析报错 */
@@ -115,10 +121,10 @@ export function normalizeSqlView(sql: string, type: ViewType): string {
  * 就地修改 board：把 board.sql 与 board.viewType 同步到 newType。
  * 不会触发 saveSettings——由调用方负责持久化。
  *
- * @param board - 目标看板定义（就地修改）
+ * @param board - 目标看板（就地修改；只需具备 sql 与 viewType 两个字段）
  * @param newType - 新视图类型
  */
-export function applyViewType(board: BoardDef, newType: ViewType): void {
+export function applyViewType(board: SqlViewCarrier, newType: ViewType): void {
   board.sql = normalizeSqlView(board.sql, newType);
   board.viewType = newType;
 }

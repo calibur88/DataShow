@@ -18,8 +18,8 @@
 | `parseYaml(text)` | `string → any` | YAML 文本 → 对象（保存前校验，失败抛错） |
 | `app.fileManager.processFrontMatter(file, fn)` | `(TFile, (fm: any) => void) → Promise<void>` | **官方原子写回**：读-改-写 frontmatter，不碰正文 |
 
-插件内写入点（`src/ui/panel.ts` 装配保存回调 → `src/ui/views/card-view.ts` 内联编辑触发；
-`src/ui/views/frontmatter-modal.ts` 属性弹窗）：
+插件内写入点（`src/render/panel-view.ts` 装配保存回调 → `src/render/card-view.ts` 内联编辑触发；
+`src/host/obsidian/frontmatter-modal.ts` 属性弹窗）：
 
 ```ts
 await app.fileManager.processFrontMatter(file, (fm) => {
@@ -32,7 +32,7 @@ await app.fileManager.processFrontMatter(file, (fm) => {
 
 | API | 用途 |
 |---|---|
-| `app.metadataCache.on("changed" / "deleted" / "resolve", cb)` | 增量索引监听（scanner 首扫 + debounce 增量） |
+| `app.metadataCache.on("changed" / "deleted" / "resolve", cb)` | 增量索引监听（索引器首扫 + debounce 增量） |
 | `app.vault.getMarkdownFiles()` | 全量首扫的文件清单 |
 | `app.vault.getAbstractFileByPath(path)` | 行路径 → `TFile`（属性编辑定位文件） |
 
@@ -46,17 +46,17 @@ await app.fileManager.processFrontMatter(file, (fm) => {
 | `app.workspace.openLinkText(path, "", false)` | 点击文件名打开笔记 |
 
 > 内联编辑与弹窗保存后无需手动刷新：`processFrontMatter` 触发 metadataCache 变更 →
-> 插件 scanner 增量更新行仓库 → 订阅者（面板）自动重跑查询。
+> 插件索引器增量更新行仓库 → 订阅者（面板）自动重跑查询。
 
 ---
 
 ## 二、插件 API（DataShow 自身）
 
-### 1. DSQL 查询层（`src/dsql/`，零 Obsidian 依赖，可直接在 Node 测试）
+### 1. DSQL 查询层（`src/core/dsql/`，零 Obsidian 依赖，可直接在 Node 测试）
 
 ```ts
-import { parseQuery, QueryParseError } from "./src/dsql/parser";
-import { executeQuery, evaluateExpr, compareUtf8 } from "./src/dsql/executor";
+import { parseQuery, QueryParseError } from "./src/core/dsql/parser";
+import { executeQuery, evaluateExpr, compareUtf8 } from "./src/core/dsql/executor";
 ```
 
 | 导出 | 签名 | 说明 |
@@ -66,13 +66,13 @@ import { executeQuery, evaluateExpr, compareUtf8 } from "./src/dsql/executor";
 | `evaluateExpr(expr, row, ctx, track?, warn?, vars?)` | `→ FieldValue` | 单表达式求值（面板渲染单元格共用） |
 | `truthy(v)` | `FieldValue → boolean` | 裸真值判断（empty 值 / null / 0 / false / 空串 / 空数组 → 假） |
 | `compareUtf8(a, b)` | `(string, string) → number` | UTF-8 字节序比较（排序 / 自动列的确定性基准） |
-| `EMPTY` | `FieldValue`（symbol 哨兵） | DSQL 未赋值哨兵（`src/dsql/types.ts`）；仅 `**empty**()` 能识别，其余运算按 null 传播 |
+| `EMPTY` | `FieldValue`（symbol 哨兵） | DSQL 未赋值哨兵（`src/core/dsql/types.ts`）；仅 `**empty**()` 能识别，其余运算按 null 传播 |
 | `ResultSet` | `{ view, columns, rows, globals, debug? }` | `view: ViewType`；`columns: { alias, expr }[]`；`debug` 见下 |
 | `QueryWarning` | `{ type, message }` | 结构化警告（除零 / 类型不匹配 / 未知函数 / TOTAL / SORT / duplicateKey 等） |
 
 语法与语义见 [docs/DSQL-语言规范.md](docs/DSQL-语言规范.md)。
 
-### 2. 行仓库（`src/index/store.ts`）
+### 2. 行仓库（`src/core/index/store.ts`）
 
 ```ts
 store.all(): DataRow[];                  // 全部行（按路径排序）
@@ -83,16 +83,16 @@ store.setIngestWarnings(path, warns);    // 归档某文件摄取警告（空数
 store.ingestWarnings(): IngestWarning[]; // 全库摄取警告（随查询调试信息输出）
 ```
 
-`DataRow = { path, file: FileMeta, fields: Record<string, FieldValue> }`（`src/dsql/types.ts`）。
+`DataRow = { path, file: FileMeta, fields: Record<string, FieldValue> }`（`src/core/dsql/types.ts`）。
 `IngestWarning = { type, file, field?, message, rawLines? }`（重复键等摄取期容错）。
 
-**frontmatter 原文扫描**（`src/index/frontmatter.ts`）：
+**frontmatter 原文扫描**（`src/core/index/frontmatter.ts`）：
 
 ```ts
 findDuplicateKeys(content): { field: string; rawLines: string[] }[];
 ```
 
-扫描笔记原文 frontmatter 的顶层键，返回重复键及其原始行；由 `src/index/scanner.ts` 接入，
+扫描笔记原文 frontmatter 的顶层键，返回重复键及其原始行；由 `src/controller/indexer.ts` 接入，
 命中则该文件从结果集剔除并计入 `duplicateKey` 警告。
 
 ### 3. 插件实例（`src/main.ts`，视图内通过 `this.plugin` 访问）
@@ -122,8 +122,8 @@ findDuplicateKeys(content): { field: string; rawLines: string[] }[];
 
 ### 5. 视图扩展点
 
-- 视图类型常量：`src/dsql/types.ts` 的 `IMPLEMENTED_VIEWS`（`TABLE_VIEW` / `LIST_VIEW` / `CARD_VIEW`）；
-- 渲染入口：`src/ui/panel.ts` 的 `renderResultByView()`，按视图类型分派到
-  `src/ui/views/table-view.ts` / `list-view.ts` / `card-view.ts`，新增视图类型在此扩展；
-- 视图与 SQL 双向同步工具：`src/ui/utils/viewSync.ts` 的
+- 视图类型常量：`src/core/dsql/types.ts` 的 `IMPLEMENTED_VIEWS`（`TABLE_VIEW` / `LIST_VIEW` / `CARD_VIEW`）；
+- 渲染入口：`src/render/panel-view.ts` 的 `renderResultByView()`，按视图类型分派到
+  `src/render/table-view.ts` / `list-view.ts` / `card-view.ts`，新增视图类型在此扩展；
+- 视图与 SQL 双向同步工具：`src/utils/viewSync.ts` 的
   `applyViewType(board, type)` / `detectTypeFromSql(sql)` / `normalizeSqlView(sql, type)`（均为纯函数）。

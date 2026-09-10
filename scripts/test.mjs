@@ -27,9 +27,14 @@ try {
     outfile,
     logLevel: "silent",
     alias: {
-      "@dsql": path.join(root, "src", "dsql"),
-      "@index": path.join(root, "src", "index"),
-      "@ui": path.join(root, "src", "ui"),
+      "@dsql": path.join(root, "src", "core", "dsql"),
+      "@index": path.join(root, "src", "core", "index"),
+      "@host": path.join(root, "src", "host"),
+      "@controller": path.join(root, "src", "controller"),
+      "@render": path.join(root, "src", "render"),
+      "@views": path.join(root, "src", "views"),
+      "@settings": path.join(root, "src", "settings"),
+      "@utils": path.join(root, "src", "utils"),
     },
   });
 } catch (err) {

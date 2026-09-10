@@ -4,7 +4,8 @@
  */
 
 import assert from "node:assert/strict";
-import { isViewType, normalizeBoard } from "@dsql/types";
+import { isViewType } from "@dsql/types";
+import { normalizeBoard } from "@settings/normalize";
 
 let passed = 0;
 function test(name: string, fn: () => void): void {

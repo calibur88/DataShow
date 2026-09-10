@@ -31,9 +31,14 @@ const context = await esbuild.context({
   absWorkingDir: here,
   outfile: OUT_FILE,
   alias: {
-    "@dsql": path.resolve(here, "src", "dsql"),
-    "@index": path.resolve(here, "src", "index"),
-    "@ui": path.resolve(here, "src", "ui"),
+    "@dsql": path.resolve(here, "src", "core", "dsql"),
+    "@index": path.resolve(here, "src", "core", "index"),
+    "@host": path.resolve(here, "src", "host"),
+    "@controller": path.resolve(here, "src", "controller"),
+    "@render": path.resolve(here, "src", "render"),
+    "@views": path.resolve(here, "src", "views"),
+    "@settings": path.resolve(here, "src", "settings"),
+    "@utils": path.resolve(here, "src", "utils"),
   },
 });
 

@@ -1,6 +1,6 @@
 # DataShow 整体架构
 
-> 本文是工程的权威架构说明。当前版本：插件 **2.1.2** · 语言 **DSQL 2.0** · minAppVersion **1.4.4**。
+> 本文是工程的权威架构说明。当前版本：插件 **2.1.4** · 语言 **DSQL 2.0** · minAppVersion **1.4.4**。
 
 ## 1. 项目定位
 
@@ -20,7 +20,8 @@ DataShow 是面向 Obsidian 的元数据看板插件：
 
 ```
 根目录/
-├── src/                 插件源码（唯一入口 src/main.ts）
+├── src/                 插件源码（唯一入口 src/main.ts；按 host / core / controller /
+│                        render / views / settings / utils 分层，详见 §3）
 ├── tests/               单元测试（七套件）
 ├── scripts/test.mjs     测试运行器
 ├── docs/                DSQL 语言规范
@@ -50,63 +51,86 @@ DataShow 是面向 Obsidian 的元数据看板插件：
 ## 3. 代码架构（src/）
 
 ```
-main.ts ── 装配与注册
-  │
-  ├─ settings.ts        设置页：看板定义管理（名称/分类/说明 + 视图模式下拉 + 增删/恢复默认）
-  │
-  ├─ dsql/  （DSQL 语言层，零 Obsidian 依赖，可独立测试）
-  │    lexer.ts         词法：**关键词**（含视图三关键词 TABLE_VIEW/LIST_VIEW/CARD_VIEW）/
-  │                     %运算符% / '字符串' / "路径" / 裸标识符 / $变量$
-  │    parser.ts        语法：前件关系驱动（书写顺序自由、每条至多一次；
-  │                     SELECT 可省略默认 *，FROM 为唯一必填，WHERE/SORT/LIMIT 以 FROM 为前件）
-  │    ast.ts           语法树定义（Query.view: ViewType）
-  │    types.ts         唯一类型出口：共享类型 / 常量 / EMPTY 哨兵（见下）
-  │    functions.ts     内置函数：sqrt / cbrt / root / contains / length / lower / upper / empty
-  │    executor.ts      执行：两遍模型（聚合遍 → 投影遍），非致命语义（错误 → null + warnings）
-  │
-  ├─ index/  （索引层）
-  │    scanner.ts       基于 metadataCache 的全量首扫 + 增量监听（debounce）
-  │    row-builder.ts   frontmatter → 行（原样入行，不改写业务字段；摄取归一：
-  │                     未赋值 → EMPTY 哨兵，空容器 "" / [] → null）
-  │    store.ts         行仓库：缓存 + 变更通知（订阅者自动重跑）+ 摄取警告归档
-  │    frontmatter.ts   原文扫描：frontmatter 顶层重复键检测（摄取容错）
-  │
-  └─ ui/  （表现层）
-       panel.ts         看板面板：头部 → DSQL 编辑器（防抖自动保存 + 视图反向同步）→
-                        工具条（刷新/视图切换）→ 结果区（按视图类型分派到三个视图组件）
-       sidebar.ts       看板侧栏：按分类分组展示设置中的看板
-       utils/viewSync.ts     视图双向同步：applyViewType / detectTypeFromSql / normalizeSqlView
-       views/table-view.ts   表格视图（只读，行点击跳转原文）
-       views/list-view.ts    列表视图（只读，文件名 + 缩进子信息）
-       views/card-view.ts    卡片视图（Kanban 看板，独占内联编辑，派生列只读）
-       views/frontmatter-modal.ts  属性编辑弹窗：读 metadataCache → stringifyYaml → parseYaml 校验
-                             → processFrontMatter 原子写回
+main.ts                 装配：new 宿主适配器 → new 索引器 → registerView → 命令/ribbon
+ ├─ host/
+ │   ├─ types.ts        唯一类型出口：宿主接口与依赖契约（IFileMeta / IVaultHost / IOpener /
+ │   │                  IFrontmatterHost / IFrontmatterEditor / IYamlCodec / IStorageHost /
+ │   │                  IUiHost / IRowSource / PanelDeps / SidebarDeps / SettingsTabDeps）
+ │   └─ obsidian/       宿主适配器（import "obsidian" 的合法位置之一）
+ │       ├─ vault-host.ts        metadataCache + vault → IVaultHost（反向链接按事件失效、惰性重算）
+ │       ├─ opener.ts            workspace.openLinkText → IOpener
+ │       ├─ frontmatter-host.ts  processFrontMatter → IFrontmatterHost（数据侧）
+ │       ├─ frontmatter-modal.ts Modal → IFrontmatterEditor（UI 侧：属性编辑弹窗）
+ │       ├─ yaml-codec.ts        parseYaml / stringifyYaml → IYamlCodec
+ │       ├─ storage-host.ts      loadData / saveData → IStorageHost（key 槽位）
+ │       └─ ui-host.ts           Notice + 控制台 → IUiHost
+ ├─ core/                可移植核心（零宿主依赖）
+ │   ├─ dsql/            DSQL 语言层（别名 @dsql/*；独立 tsconfig，可独立发版）
+ │   │   ├─ types.ts     语言层类型出口：DataRow / FileMeta / FieldValue / EMPTY / ViewType
+ │   │   └─ lexer.ts / parser.ts / ast.ts / functions.ts / executor.ts
+ │   └─ index/
+ │       ├─ store.ts     行仓库：缓存 + 变更通知 + 摄取警告归档
+ │       ├─ row-builder.ts   IFileMeta + frontmatter → DataRow（摄取归一）
+ │       └─ frontmatter.ts   原文扫描：frontmatter 顶层重复键检测
+ ├─ controller/
+ │   └─ indexer.ts       索引器：订阅 IVaultHost → 构造行 → 写 DataStore（300ms 防抖）
+ ├─ render/              纯 UI（只吃 Deps，零 obsidian import）
+ │   ├─ panel-view.ts    面板：DSQL 编辑器 + 工具条 + 结果区分派
+ │   ├─ sidebar-view.ts  侧栏：看板分组清单与折叠持久化
+ │   └─ table-view.ts / list-view.ts / card-view.ts    三视图渲染
+ ├─ views/               Obsidian 视图壳（import "obsidian" 的合法位置之一）
+ │   ├─ panel.ts / sidebar.ts   ItemView 生命周期 + 依赖注入
+ │   ├─ settings-tab.ts  PluginSettingTab 设置页
+ │   └─ view-types.ts    视图类型常量与面板状态
+ ├─ settings/            设置与看板内容（零宿主依赖）
+ │   ├─ schema.ts        形状：DatashowSettings / BoardDef / SETTINGS_KEY / CONTENT_SCHEMA_VERSION
+ │   ├─ defaults.ts      默认值与看板构造
+ │   └─ normalize.ts     校形与版本迁移（normalizeBoard / normalizeSettings）
+ └─ utils/
+     └─ viewSync.ts      视图与 SQL 双向同步
 ```
 
 **分层依赖**（单向，不得反向依赖）：
 
 ```
-main.ts / settings.ts ──► ui/ ──┐
-   │                            ├──► dsql/（types.ts）
-   └──────────► index/ ─────────┘
+main ──► views ──► render ──► controller ──► core ──► host/types
+  │                                                      ▲
+  └──────────► host/obsidian ───────────────────────────┘
+
+旁支：settings / utils 被 render / views / controller / core 引用，自身不依赖业务层；
+      dsql 内部互引一律相对路径，外部经 @dsql/* 引用
 ```
 
-- `src/dsql/` **零 Obsidian 依赖**：不 import `obsidian`，保证可在 Node 独立测试；
-- `src/dsql/types.ts` 是**唯一类型出口**：共享类型与常量统一在此定义，各文件不重复声明；
-- `src/ui/views/*-view.ts` 是**纯 TS 工厂函数**（`renderXxxView(...): HTMLElement`），不引入前端框架；
-- `ui/` 不直接依赖 `index/`：行仓库（store）经插件实例由 `main.ts` 装配注入，表现层源码零 `@index/*` 引用；
-- 跨层引用一律走路径别名 `@dsql/*` / `@index/*` / `@ui/*`（tsconfig、esbuild、测试运行器三处同构配置）。
+| 层 | 约束 |
+|---|---|
+| `host/types` | 纯类型文件，禁止运行时值；跨层共享接口与契约的唯一声明位置 |
+| `host/obsidian` | 仅依赖 `host/types` 与 `obsidian`；未文档化的运行时 API 需加守卫 |
+| `core` | 禁止 `import "obsidian"`，禁止直接访问 DOM；函数在 Node 下可单测 |
+| `controller` | 只依赖 `IVaultHost` 与 `DataStore`，不感知视图 |
+| `render` | 只吃 Deps 与容器元素，不 import `obsidian`、不反向依赖 `main` |
+| `views` | 只做生命周期与依赖注入；订阅在 `onClose` 成对注销 |
+| `main` | 只做装配，业务逻辑一律下沉 |
+
+- **可移植性**：换宿主只需重写 `main.ts` + `views/` + `host/obsidian/`（另需宿主提供 `createDiv` / `createEl` /
+  `createSpan` / `addClass` / `toggleClass` / `isShown` 等 HTMLElement 原型扩展，或改用等价 DOM 工具），
+  `core/` `controller/` `render/` `settings/` `utils/` 逐字不动；
+- **类型出口**：宿主接口集中在 `host/types.ts`，语言层类型集中在 `core/dsql/types.ts`，两者不重复声明；
+- **路径别名**：`@dsql/*` → `src/core/dsql/*`、`@index/*` → `src/core/index/*`，另有
+  `@host` / `@controller` / `@render` / `@views` / `@settings` / `@utils`，
+  在 `tsconfig.json` / `esbuild.config.mjs` / `scripts/test.mjs` 三处同构配置。
 
 ### 数据流
 
 ```
-笔记变更（含卡片视图内联编辑写回 frontmatter）
-  → scanner 增量监听（debounce）→ row-builder 构造行 → store 更新并广播
-  → panel 订阅重跑 DSQL → executor 出结果 → 表格/列表/卡片渲染
+笔记变更 / 属性写回
+  → IVaultHost 事件（resolved / changed / deleted / renamed）
+  → VaultIndexer 防抖合并 → buildRow → DataStore 变更广播
+  → panel 控制器订阅重跑 DSQL → executor 出结果 → render/三视图渲染
 ```
 
-看板定义（名称/分类/说明/DSQL/视图类型 `viewType`）只存插件 `data.json`；
+看板定义（名称/分类/说明/DSQL/视图类型 `viewType`）只存插件 `data.json` 的 `settings` 槽位；
 面板 DSQL 防抖自动保存后触发侧栏刷新，外部变更经 `onExternalChange` 同步。
+读写约定：读路径返回 `T | null` 由调用方降级，写路径 `reject(Error)` 且 message 可直接展示。
 
 ## 4. 构建与测试
 
@@ -124,7 +148,7 @@ npm test        # 单测七套件（零 Obsidian 依赖）
 - **测试流程**：`scripts/test.mjs` 用 esbuild 把 `tests/all.ts` 打包成临时 CJS 文件，
   交给 node 执行后删除临时文件。新套件必须**手动注册到 `tests/all.ts`**（非自动扫描）。
 
-  > 验证看板 SQL 不能直接用 `node` 跑 TS：`src/dsql/parser.ts` 用了参数属性
+  > 验证看板 SQL 不能直接用 `node` 跑 TS：`src/core/dsql/parser.ts` 用了参数属性
   > （`constructor(private tokens: Token[])`），node 的 strip-only 模式不支持，必须经 esbuild 打包。
 
 - **测试套件**（共 106 例）：
@@ -159,9 +183,10 @@ npm test        # 单测七套件（零 Obsidian 依赖）
 
 ## 6. 现状
 
-**已实现**（2.1.2 / DSQL 2.0）：DSQL 查询（表达式 / 函数 / 多级排序 / 自定义优先级 / 调试信息）、
+**已实现**（2.1.4 / DSQL 2.0）：DSQL 查询（表达式 / 函数 / 多级排序 / 自定义优先级 / 调试信息）、
 TOTAL 全表聚合与 `$变量$` 派生体系、三种「无」语义分家（正常值 / 空容器 / 未赋值）、
 别名唯一性校验、frontmatter 重复键容错、表格 / 列表 / 卡片三视图、卡片视图内联编辑、
-视图切换与 SQL 双向同步、索引增量更新。
+视图切换与 SQL 双向同步、索引增量更新、host 依赖模式分层（宿主能力收敛于 `host/obsidian`，
+核心层零 Obsidian 依赖）。
 
 **规划**：统一记录在根目录 [`TODO`](TODO)（v2.0 已落地，当前已清空）。

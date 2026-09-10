@@ -3,7 +3,7 @@
  * @description DSQL v2.0 AST：表达式、数据源、排序子句与查询结构的类型定义
  */
 
-import type { ViewType } from "@dsql/types";
+import type { ViewType } from "./types";
 
 export type BinOp =
   | "==" | "!=" | ">" | "<" | ">=" | "<="   // 比较
@@ -21,7 +21,7 @@ export type Expr =
 
 export interface LitExpr {
   kind: "lit";
-  value: import("@dsql/types").FieldValue;
+  value: import("./types").FieldValue;
 }
 
 export interface FieldExpr {
@@ -91,7 +91,7 @@ export interface SortKey {
   /** 键级方向；null = 用子句级方向 */
   dir: "asc" | "desc" | null;
   /** 自定义优先级值列表（**SORT** 键 **BY** (...)），作用于本键 */
-  priority: import("@dsql/types").FieldValue[] | null;
+  priority: import("./types").FieldValue[] | null;
 }
 
 export interface SortClause {

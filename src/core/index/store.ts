@@ -3,17 +3,10 @@
  * @description 行仓库：内存中的「笔记 = 行」数据库，查询层与表现层的唯一数据源
  */
 
+import type { IngestWarning } from "@host/types";
 import type { DataRow } from "@dsql/types";
 
-/** 摄取期容错警告（DSQL 1.5）：如重复键剔除。按文件路径归档，随查询调试信息一并输出。 */
-export interface IngestWarning {
-  type: string;
-  file: string;
-  field?: string;
-  message: string;
-  /** 原始键值对档案（重复键场景保留原文行，供排查） */
-  rawLines?: string[];
-}
+export type { IngestWarning };
 
 /**
  * 行仓库：内存中的“笔记 = 行”数据库，L3 查询层与 L4 表现层的唯一数据源。

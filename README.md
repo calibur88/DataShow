@@ -34,17 +34,22 @@ DataShow/
 └── test-vault-local/    本地测试库（不入库，日常验收用）
 ```
 
-`src/` 分层（`dsql / index / ui` 三层，跨层引用走别名 `@dsql/*` / `@index/*` / `@ui/*`）：
+`src/` 分层（host 依赖模式：宿主能力收敛于 `host/obsidian/`，核心层零 Obsidian 依赖；
+跨层引用走别名 `@dsql` / `@index` / `@host` / `@controller` / `@render` / `@views` / `@settings` / `@utils`）：
 
 ```
 src/
-├── main.ts         插件入口：装配各层、注册视图
-├── settings.ts     设置页：看板管理 + 视图模式
-├── dsql/           DSQL 语言层（零 Obsidian 依赖）：types.ts 唯一类型出口（含 ViewType 与
-│                   EMPTY 哨兵）+ lexer / parser / ast / functions / executor
-├── index/          索引层：扫描器 / 行构造 / 行仓库 / frontmatter 原文扫描
-└── ui/             表现层：panel / sidebar + views/（表格·列表·卡片视图、属性编辑弹窗）
-                    + utils/（viewSync 视图与 SQL 双向同步，纯函数）
+├── main.ts         插件入口：只做装配（宿主适配器 → 索引器 → 视图注册）
+├── host/           types.ts 宿主接口与依赖契约唯一出口 + obsidian/ 七个适配器
+├── core/           可移植核心（零 Obsidian 依赖）
+│   ├── dsql/       DSQL 语言层（别名 @dsql，独立 tsconfig）：types.ts 语言层类型出口
+│   │               （含 ViewType 与 EMPTY 哨兵）+ lexer / parser / ast / functions / executor
+│   └── index/      行仓库 / 行构造 / frontmatter 原文扫描（别名 @index）
+├── controller/     索引器：宿主事件 → 行仓库
+├── render/         纯 UI：面板 / 侧栏 + 表格·列表·卡片三视图
+├── views/          Obsidian 视图壳（panel / sidebar / settings-tab）+ 视图类型常量
+├── settings/       设置与看板内容：schema / defaults / normalize
+└── utils/          viewSync 视图与 SQL 双向同步（纯函数）
 ```
 
 ## 安装

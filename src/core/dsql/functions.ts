@@ -3,7 +3,7 @@
  * @description DSQL 内置函数：sqrt/cbrt/root/contains/length/lower/upper/empty 的注册与调用
  */
 
-import { EMPTY, type FieldValue } from "@dsql/types";
+import { EMPTY, type FieldValue } from "./types";
 
 /**
  * 调用内置函数（args 为已求值的参数）。参数不合法一律返回 null（非致命，不抛错）。

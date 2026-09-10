@@ -3,6 +3,46 @@
 > 版本按迭代顺序倒序排列，每个版本条目固定分为「插件更新」与「DSQL 更新」两类；
 > 编写规范见 [CONTRIBUTING.md](CONTRIBUTING.md) §6。
 
+## [2.1.4] - 未推送
+
+### 插件更新
+
+**架构调整为 host 依赖模式**：宿主能力收敛到 `host/` 一层，核心逻辑零 Obsidian 依赖，可按宿主整体移植。
+
+- 新增 `host/types.ts` 作为宿主接口与依赖契约的唯一出口：`IVaultHost`（数据源，全 Promise 语义）、
+  `IOpener`（打开笔记）、`IFrontmatterHost` / `IFrontmatterEditor`（属性读写与编辑弹窗，数据侧与 UI 侧分离）、
+  `IYamlCodec`、`IStorageHost`（带 key 槽位）、`IUiHost`（提示与日志），另含 `PanelDeps` / `SidebarDeps` / `SettingsTabDeps`；
+- 新增 `host/obsidian/` 七个适配器：`vault-host` / `opener` / `frontmatter-host` / `frontmatter-modal` /
+  `yaml-codec` / `storage-host` / `ui-host`，是 `import "obsidian"` 的合法位置之一；
+- 目录归位：`dsql/*` → `core/dsql/*`（对外别名 `@dsql/*` 不变），`index/{store,row-builder,frontmatter}` → `core/index/*`，
+  `index/scanner` → `controller/indexer`（改吃 `IVaultHost`，事件防抖与 `DataStore` 写入都在本层），
+  `ui/views/三视图` → `render/*`，`ui/utils/viewSync` → `utils/*`，
+  `settings.ts` → `settings/{schema,defaults,normalize}` + `views/settings-tab`；
+- 面板与侧栏拆为「视图壳 + 纯 UI」：`views/{panel,sidebar}` 只管 Obsidian `ItemView` 生命周期，
+  `render/{panel-view,sidebar-view}` 承担全部 DOM 与交互，两者只经 Deps 通信；
+- UI 不再反向依赖插件类：`ui/panel` / `ui/sidebar` / 设置页原先 `import type DatashowPlugin` 的三处反向依赖全部消失；
+- 数据链路单向化：`IVaultHost.subscribe → VaultIndexer → DataStore → UI 订阅`，宿主事件不再直达 UI；
+- 读写约定统一：读路径返回 `T | null` 由调用方降级，写路径 `reject(Error)` 且 message 可直接展示。
+- **行为零变化**：DOM 结构、类名、样式、交互、DSQL 语法与查询语义均未改动；
+- `data.json` 升级为槽位结构（`{ "settings": { ... } }`），旧扁平格式仍可读为 `settings` 槽，首次保存自动升级，无需手动迁移；
+- 新增 `schemaVersion` 字段（缺省按 `CONTENT_SCHEMA_VERSION = 1`），供后续内容迁移使用；
+- 验收：`tsc --noEmit` 零错误，`npm run build` 通过，106 例（7 套件）全部通过。
+
+### DSQL 更新
+
+**语言层下沉为可移植核心**：`src/dsql/` → `src/core/dsql/`。
+
+- 对外别名 `@dsql/*` 保持不变，调用方无需改动；
+- 模块内部互引由 `@dsql/types` 改为相对路径，配合新增的 `src/core/dsql/tsconfig.json`（独立 `baseUrl`、空 `paths`），
+  使 DSQL 可独立编译与发版，`.d.ts` 中不残留别名；
+- `ViewType` / `isViewType` / `IMPLEMENTED_VIEWS` / `VIEW_LABELS` 归属语言层（`utils/viewSync` 只从 `@dsql/types` 取视图类型，不依赖 settings）；
+- 语法与行为零变化。
+
+> **版本兼容声明**：本版本与 2.1.3 **完全兼容**（数据可读、设置沿用、DSQL 语法不变）。
+> **测试情况**：106 例（7 套件）全部通过。
+
+---
+
 ## [2.1.3] - 2026-09-09（当前）
 
 ### 插件更新

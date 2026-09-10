@@ -1,26 +1,32 @@
 /**
- * @module settings
- * @description 插件设置页：常规设置 + 看板管理（身份信息编辑，DSQL 在面板中编辑）
+ * @module views/settings-tab
+ * @description 设置页：常规设置 + 看板管理（身份信息编辑，DSQL 在面板中编辑）
  */
 
-import { App, PluginSettingTab, Setting } from "obsidian";
-import type DatashowPlugin from "./main";
-import { IMPLEMENTED_VIEWS, VIEW_LABELS, makeBoardId, type BoardDef, type ViewType } from "@dsql/types";
+import { App, Plugin, PluginSettingTab, Setting } from "obsidian";
+import { IMPLEMENTED_VIEWS, VIEW_LABELS, type ViewType } from "@dsql/types";
+import type { SettingsTabDeps } from "@host/types";
+import { makeBoardId } from "@settings/defaults";
+import type { BoardDef } from "@settings/schema";
 
 /**
  * 插件设置页：
  * 1. 常规设置（数据目录、打开方式）
  * 2. 看板管理 —— 只维护看板身份信息（名称/类型/说明）；
  *    DSQL 在看板面板中编辑。
+ *
+ * plugin 仅用于满足 PluginSettingTab 的构造签名，业务读写一律走 deps
  */
 export class DatashowSettingTab extends PluginSettingTab {
-  private plugin: DatashowPlugin;
   /** 当前展开编辑器的看板 id */
   private expandedId: string | null = null;
 
-  constructor(app: App, plugin: DatashowPlugin) {
+  constructor(
+    app: App,
+    plugin: Plugin,
+    private deps: SettingsTabDeps,
+  ) {
     super(app, plugin);
-    this.plugin = plugin;
   }
 
   /** 渲染设置页（Obsidian 打开设置面板时调用）。 */
@@ -41,9 +47,9 @@ export class DatashowSettingTab extends PluginSettingTab {
       .setName("在新标签页打开看板")
       .setDesc("开启后点击侧栏看板会在新标签页打开；关闭则复用已打开的看板标签页。")
       .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.openInNewTab).onChange(async (value) => {
-          this.plugin.settings.openInNewTab = value;
-          await this.plugin.saveSettings();
+        toggle.setValue(this.deps.settings().openInNewTab).onChange(async (value) => {
+          this.deps.settings().openInNewTab = value;
+          await this.deps.saveSettings();
         }),
       );
 
@@ -51,9 +57,9 @@ export class DatashowSettingTab extends PluginSettingTab {
       .setName("显示 DSQL 调试信息")
       .setDesc("在看板面板的查询结果下方展示 DSQL 内部执行信息（每个操作的处理行数、字段找不到等）。")
       .addToggle((toggle) =>
-        toggle.setValue(this.plugin.settings.showDebug).onChange(async (value) => {
-          this.plugin.settings.showDebug = value;
-          await this.plugin.saveSettings();
+        toggle.setValue(this.deps.settings().showDebug).onChange(async (value) => {
+          this.deps.settings().showDebug = value;
+          await this.deps.saveSettings();
         }),
       );
 
@@ -63,12 +69,12 @@ export class DatashowSettingTab extends PluginSettingTab {
       .addText((text) =>
         text
           .setPlaceholder("4")
-          .setValue(String(this.plugin.settings.decimalPlaces))
+          .setValue(String(this.deps.settings().decimalPlaces))
           .onChange(async (value) => {
             const n = parseInt(value.trim(), 10);
             // 不设上限：非负整数即可；超过浮点数精度（toFixed 上限 100 位）重置为默认
-            this.plugin.settings.decimalPlaces = Number.isNaN(n) || n < 0 || n > 100 ? 4 : n;
-            await this.plugin.saveSettings();
+            this.deps.settings().decimalPlaces = Number.isNaN(n) || n < 0 || n > 100 ? 4 : n;
+            await this.deps.saveSettings();
           }),
       );
   }
@@ -88,20 +94,20 @@ export class DatashowSettingTab extends PluginSettingTab {
         button.setButtonText("新建看板").onClick(async () => {
           const board: BoardDef = {
             id: makeBoardId(),
-            name: `新看板 ${this.plugin.settings.boards.length + 1}`,
+            name: `新看板 ${this.deps.settings().boards.length + 1}`,
             type: "",
             description: "",
             sql: "",
             viewType: "",
           };
-          this.plugin.settings.boards.push(board);
-          await this.plugin.saveSettings();
+          this.deps.settings().boards.push(board);
+          await this.deps.saveSettings();
           this.expandedId = board.id;
           this.display();
         }),
       );
 
-    const boards = this.plugin.settings.boards;
+    const boards = this.deps.settings().boards;
     if (boards.length === 0) {
       containerEl.createDiv({
         cls: "datashow-settings__empty",
@@ -109,8 +115,8 @@ export class DatashowSettingTab extends PluginSettingTab {
       });
       new Setting(containerEl).addButton((button) =>
         button.setButtonText("恢复默认看板").onClick(async () => {
-          this.plugin.settings.boards = this.plugin.defaultBoards();
-          await this.plugin.saveSettings();
+          this.deps.settings().boards = this.deps.defaultBoards();
+          await this.deps.saveSettings();
           this.display();
         }),
       );
@@ -139,10 +145,9 @@ export class DatashowSettingTab extends PluginSettingTab {
       )
       .addExtraButton((btn) =>
         btn.setIcon("trash").setTooltip("删除看板").onClick(async () => {
-          this.plugin.settings.boards = this.plugin.settings.boards.filter(
-            (b) => b.id !== board.id,
-          );
-          await this.plugin.saveSettings();
+          const settings = this.deps.settings();
+          settings.boards = settings.boards.filter((b) => b.id !== board.id);
+          await this.deps.saveSettings();
           if (this.expandedId === board.id) this.expandedId = null;
           this.display();
         }),
@@ -159,7 +164,7 @@ export class DatashowSettingTab extends PluginSettingTab {
     const nameSetting = new Setting(editor).setName("看板名称").addText((text) =>
       text.setValue(board.name).onChange(async (value) => {
         board.name = value.trim();
-        await this.plugin.saveSettings();
+        await this.deps.saveSettings();
       }),
     );
     nameSetting.setDesc("侧栏显示的名称。");
@@ -167,7 +172,7 @@ export class DatashowSettingTab extends PluginSettingTab {
     new Setting(editor).setName("看板分类").addText((text) =>
       text.setPlaceholder("例如：任务 / 项目 / 自定义").setValue(board.type).onChange(async (value) => {
         board.type = value.trim();
-        await this.plugin.saveSettings();
+        await this.deps.saveSettings();
       }),
     );
 
@@ -183,17 +188,18 @@ export class DatashowSettingTab extends PluginSettingTab {
         dropdown.setValue(board.viewType);
         dropdown.onChange(async (value) => {
           // 白名单：仅接受 ViewType 或空串
-          board.viewType = value === "" || value === "TABLE_VIEW" || value === "LIST_VIEW" || value === "CARD_VIEW"
-            ? (value as ViewType | "")
-            : "";
-          await this.plugin.saveSettings();
+          board.viewType =
+            value === "" || value === "TABLE_VIEW" || value === "LIST_VIEW" || value === "CARD_VIEW"
+              ? (value as ViewType | "")
+              : "";
+          await this.deps.saveSettings();
         });
       });
 
     new Setting(editor).setName("作用描述").addTextArea((area) => {
       area.setValue(board.description).onChange(async (value) => {
         board.description = value;
-        await this.plugin.saveSettings();
+        await this.deps.saveSettings();
       });
       area.inputEl.rows = 2;
       area.inputEl.addClass("datashow-settings__textarea");

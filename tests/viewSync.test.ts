@@ -4,8 +4,8 @@
  */
 
 import assert from "node:assert/strict";
-import { makeBoardId } from "@dsql/types";
-import { applyViewType, detectTypeFromSql, normalizeSqlView } from "@ui/utils/viewSync";
+import { makeBoardId } from "@settings/defaults";
+import { applyViewType, detectTypeFromSql, normalizeSqlView } from "@utils/viewSync";
 
 let passed = 0;
 function test(name: string, fn: () => void): void {

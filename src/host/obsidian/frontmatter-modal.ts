@@ -1,25 +1,42 @@
 /**
- * @module ui/views/frontmatter-modal
- * @description frontmatter 编辑弹窗：官方 API 流水线，索引随之增量更新
- *
- * 官方 API（metadataCache 读 → stringifyYaml 展示 →
- * parseYaml 解析 → fileManager.processFrontMatter 原子写回）。
- * 保存后索引自动增量更新，看板查询结果随之刷新。
+ * @module host/obsidian/frontmatter-modal
+ * @description 属性编辑弹窗：IFrontmatterEditor 的 Obsidian Modal 实现（官方 API 流水线）
  */
 
-import { App, Modal, TFile, parseYaml, stringifyYaml } from "obsidian";
+import { App, Modal, TFile } from "obsidian";
+import type { IFrontmatterEditor, IYamlCodec } from "../types";
 
 /**
- * frontmatter 编辑弹窗：官方 API（metadataCache 读 → stringifyYaml 展示 →
- * parseYaml 解析 → fileManager.processFrontMatter 原子写回）。
- * 保存后索引自动增量更新，看板查询结果随之刷新。
+ * 属性编辑弹窗适配器：metadataCache 读 → stringify 展示 → parse 校验 → 原子写回。
+ * 保存后索引由 metadataCache 事件增量更新，看板查询结果随之刷新
  */
-export class FrontmatterEditModal extends Modal {
+export class ObsidianFrontmatterEditor implements IFrontmatterEditor {
+  constructor(
+    private app: App,
+    private codec: IYamlCodec,
+  ) {}
+
+  /**
+   * 打开弹窗。文件不存在或不是 Markdown 文件时静默返回。
+   *
+   * @param path - 笔记路径
+   * @param onSaved - 保存成功回调
+   */
+  openEditor(path: string, onSaved: () => void): void {
+    const file = this.app.vault.getFileByPath(path);
+    if (!(file instanceof TFile) || file.extension !== "md") return;
+    new FrontmatterEditModal(this.app, file, this.codec, onSaved).open();
+  }
+}
+
+/** 属性编辑弹窗本体：模块私有，对外只经 ObsidianFrontmatterEditor 暴露。 */
+class FrontmatterEditModal extends Modal {
   private readonly fm: Record<string, unknown>;
 
   constructor(
     app: App,
     private file: TFile,
+    private codec: IYamlCodec,
     private onSaved: () => void,
   ) {
     super(app);
@@ -32,7 +49,7 @@ export class FrontmatterEditModal extends Modal {
     contentEl.addClass("datashow-fm-modal");
 
     const textarea = contentEl.createEl("textarea", { cls: "datashow-fm-modal__input" });
-    textarea.value = stringifyYaml(this.fm);
+    textarea.value = this.codec.stringify(this.fm);
     textarea.spellcheck = false;
     textarea.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
@@ -54,7 +71,7 @@ export class FrontmatterEditModal extends Modal {
   private async save(raw: string, err: HTMLElement): Promise<void> {
     let parsed: unknown;
     try {
-      parsed = parseYaml(raw);
+      parsed = this.codec.parse(raw);
     } catch (e) {
       err.setText(`YAML 解析失败：${(e as Error).message}`);
       err.show();

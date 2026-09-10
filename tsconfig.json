@@ -2,9 +2,14 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@dsql/*": ["src/dsql/*"],
-      "@index/*": ["src/index/*"],
-      "@ui/*": ["src/ui/*"]
+      "@dsql/*": ["src/core/dsql/*"],
+      "@index/*": ["src/core/index/*"],
+      "@host/*": ["src/host/*"],
+      "@controller/*": ["src/controller/*"],
+      "@render/*": ["src/render/*"],
+      "@views/*": ["src/views/*"],
+      "@settings/*": ["src/settings/*"],
+      "@utils/*": ["src/utils/*"]
     },
     "inlineSourceMap": true,
     "inlineSources": true,

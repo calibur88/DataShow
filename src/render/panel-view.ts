@@ -1,129 +1,122 @@
 /**
- * @module ui/panel
- * @description 主工作区看板面板：DSQL 编辑 + 查询执行 + 三视图结果区分派
+ * @module render/panel-view
+ * @description 看板面板渲染：DSQL 编辑 + 查询执行 + 三视图结果区分派（纯 UI，只吃 PanelDeps）
  */
 
-import { ItemView, WorkspaceLeaf, TFile } from "obsidian";
-import type DatashowPlugin from "../main";
 import { executeQuery, type QueryDebug, type ResultSet } from "@dsql/executor";
 import { parseQuery, QueryParseError } from "@dsql/parser";
-import { renderTableView } from "@ui/views/table-view";
-import { renderListView } from "@ui/views/list-view";
-import { renderCardView } from "@ui/views/card-view";
-import { applyViewType, detectTypeFromSql } from "@ui/utils/viewSync";
 import {
   IMPLEMENTED_VIEWS,
-  PANEL_VIEW_TYPE,
   VIEW_LABELS,
-  type BoardDef,
   type DataRow,
   type FieldValue,
-  type PanelViewState,
   type ViewType,
 } from "@dsql/types";
+import type { PanelDeps } from "@host/types";
+import { renderCardView } from "@render/card-view";
+import { renderListView } from "@render/list-view";
+import { renderTableView } from "@render/table-view";
+import type { BoardDef } from "@settings/schema";
+import { applyViewType, detectTypeFromSql } from "@utils/viewSync";
+
+/** 面板控制器：视图壳持有并驱动其生命周期 */
+export interface PanelController {
+  /** 订阅数据/看板变更并首次渲染 */
+  mount(): Promise<void>;
+  /** 整体重绘（看板切换或外部变更） */
+  render(): Promise<void>;
+  /** 落盘防抖保存并退订全部订阅 */
+  dispose(): void;
+}
 
 /**
- * 主工作区看板面板（v2.0）：
- * - 头部：看板名称 + 自由分类徽标（board.type 仍用于侧栏分组）
- * - DSQL 编辑器：直接编辑、防抖自动保存到看板定义；
- *   保存时反向同步视图下拉（detectTypeFromSql）
- * - 工具条：刷新 + 视图模式选择（跟随后跟随 / 强制覆盖）
- * - 查询结果：随索引/看板变化自动重跑，按 board.viewType / result.view 分派到
- *   TableView / ListView / CardView
+ * 创建看板面板控制器。
+ *
+ * @param root - 宿主容器（由视图壳提供，如 ItemView.contentEl）
+ * @param getBoardId - 当前看板 id 读取器（状态在视图壳）
+ * @param isVisible - 容器可见性判定（由视图壳提供）
+ * @param deps - 面板依赖契约
+ * @returns 面板控制器
  */
-export class DatashowPanelView extends ItemView {
-  private plugin: DatashowPlugin;
-  private state: PanelViewState | null = null;
-  private unsubStore: (() => void) | null = null;
-  private unsubBoards: (() => void) | null = null;
-
+export function createPanelController(
+  root: HTMLElement,
+  getBoardId: () => string,
+  isVisible: () => boolean,
+  deps: PanelDeps,
+): PanelController {
+  let unsubStore: (() => void) | null = null;
+  let unsubBoards: (() => void) | null = null;
   /** 当前渲染的看板 id；变化时才整体重绘 */
-  private renderedBoardId: string | null = null;
-  private resultWrap: HTMLElement | null = null;
-  private saveTimer: number | null = null;
-  /** 工具条上的视图下拉（render 时建好，renderResult 复用） */
-  private viewSelect: HTMLSelectElement | null = null;
-  /** 卡片视图搜索控件（render 时建好，renderResult 复用） */
-  private searchInput: HTMLInputElement | null = null;
-  private searchBtn: HTMLButtonElement | null = null;
-  private clearBtn: HTMLButtonElement | null = null;
+  let renderedBoardId: string | null = null;
+  let resultWrap: HTMLElement | null = null;
+  let saveTimer: number | null = null;
+  let viewSelect: HTMLSelectElement | null = null;
+  let searchInput: HTMLInputElement | null = null;
+  let searchBtn: HTMLButtonElement | null = null;
+  let clearBtn: HTMLButtonElement | null = null;
   /** 卡片视图搜索词（会话内临时状态，不持久化到 data.json） */
-  private searchTerm = "";
-  /** 工具条刷新按钮（按 view 同步 enable/disable？暂保留始终可用） */
+  let searchTerm = "";
+  /** 当前结果区标签页（每次重跑回到「查询结果」） */
+  let resultTab: "result" | "debug" = "result";
 
-  constructor(leaf: WorkspaceLeaf, plugin: DatashowPlugin) {
-    super(leaf);
-    this.plugin = plugin;
-  }
+  const currentBoard = (): BoardDef | undefined =>
+    deps.settings().boards.find((b) => b.id === getBoardId());
 
-  getViewType(): string {
-    return PANEL_VIEW_TYPE;
-  }
+  const onExternalChange = (): void => {
+    if (root.contains(document.activeElement) && renderedBoardId) return;
+    void render();
+  };
 
-  getDisplayText(): string {
-    const board = this.currentBoard();
-    return board ? `DataShow: ${board.name}` : "DataShow 看板";
-  }
+  const scheduleSave = (): void => {
+    if (saveTimer != null) window.clearTimeout(saveTimer);
+    saveTimer = window.setTimeout(() => flushSave(), 500);
+  };
 
-  getIcon(): string {
-    return "layout-dashboard";
-  }
+  const flushSave = (): void => {
+    if (saveTimer != null) {
+      window.clearTimeout(saveTimer);
+      saveTimer = null;
+    }
+    void deps.saveSettings();
+    // R3 反向同步：保存时若 SQL 开头有合法视图关键词，自动切下拉
+    syncSelectFromSql();
+  };
 
-  getState(): PanelViewState {
-    return this.state ?? { boardId: "" };
-  }
+  /**
+   * R3 反向同步：读取当前 board.sql，按 detectTypeFromSql 判断是否要切下拉。
+   * - 返回非空 + 与 board.viewType 不一致 → 切下拉并设 board.viewType
+   * - 返回 null → 下拉保持当前状态（不强制切到跟随语句）
+   */
+  const syncSelectFromSql = (): void => {
+    const board = currentBoard();
+    if (!board || !viewSelect) return;
+    const detected = detectTypeFromSql(board.sql);
+    if (detected && detected !== board.viewType) {
+      board.viewType = detected;
+      viewSelect.value = detected;
+      void deps.saveSettings();
+    }
+  };
 
-  async setState(state: PanelViewState, result: import("obsidian").ViewStateResult): Promise<void> {
-    this.state = state;
-    await super.setState(state, result);
-    if (this.contentEl.isShown()) await this.render();
-  }
-
-  /** 打开面板：订阅数据与看板变更，并首次渲染。 */
-  async onOpen(): Promise<void> {
-    this.unsubBoards = this.plugin.addBoardListener(() => this.onExternalChange());
-    this.unsubStore = this.plugin.store.subscribe(() => this.renderResult(true));
-    if (this.state) await this.render();
-  }
-
-  /** 关闭面板：落盘防抖保存并退订。 */
-  async onClose(): Promise<void> {
-    this.flushSave();
-    this.unsubBoards?.();
-    this.unsubStore?.();
-    this.contentEl.empty();
-  }
-
-  private currentBoard(): BoardDef | undefined {
-    return this.plugin.settings.boards.find((b) => b.id === this.state?.boardId);
-  }
-
-  /** 外部（设置页等）修改看板后重绘；编辑器聚焦时不打断。 */
-  private onExternalChange(): void {
-    if (this.contentEl.contains(document.activeElement) && this.renderedBoardId) return;
-    void this.render();
-  }
-
-  private async render(): Promise<void> {
-    const root = this.contentEl;
+  async function render(): Promise<void> {
     root.empty();
     root.addClass("datashow-panel");
 
-    const board = this.currentBoard();
+    const board = currentBoard();
     if (!board) {
-      this.renderedBoardId = null;
+      renderedBoardId = null;
       root.createDiv({
         cls: "datashow-panel__empty",
         text: "看板不存在或已被删除（可在插件设置中重新创建）。",
       });
       return;
     }
-    const prevBoardId = this.renderedBoardId;
-    this.renderedBoardId = board.id;
+    const prevBoardId = renderedBoardId;
+    renderedBoardId = board.id;
 
     // 看板真正切换时清空搜索词（同一看板因外部元数据变更重绘时不清，避免误清用户输入）
     if (prevBoardId !== board.id) {
-      this.searchTerm = "";
+      searchTerm = "";
     }
 
     // ---- 头部：名称 + 自由分类徽标（board.type 是分类，不是视图类型） ----
@@ -148,7 +141,7 @@ export class DatashowPanelView extends ItemView {
     textarea.spellcheck = false;
     textarea.addEventListener("input", () => {
       board.sql = textarea.value;
-      this.scheduleSave();
+      scheduleSave();
     });
 
     // ---- 工具条：左（搜索组） + 右（刷新 + 视图模式） ----
@@ -156,29 +149,29 @@ export class DatashowPanelView extends ItemView {
 
     // 搜索控件：输入框 + 搜索 + 清空（独立成组，窄屏整体换行到第二行）
     const searchGroup = toolbar.createDiv({ cls: "datashow-toolbar__search-group" });
-    const searchInput = searchGroup.createEl("input", {
+    const input = searchGroup.createEl("input", {
       cls: "datashow-toolbar__search",
       attr: { type: "text", placeholder: "🔍 搜索卡片..." },
     }) as HTMLInputElement;
-    searchInput.value = this.searchTerm;
-    searchInput.addEventListener("keydown", (e) => {
+    input.value = searchTerm;
+    input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        this.applySearch();
+        applySearch();
       }
     });
-    const searchBtn = searchGroup.createEl("button", { cls: "datashow-toolbar__btn", text: "搜索" });
-    searchBtn.addEventListener("click", () => this.applySearch());
-    const clearBtn = searchGroup.createEl("button", { cls: "datashow-toolbar__btn", text: "清空" });
-    clearBtn.addEventListener("click", () => this.clearSearch());
-    this.searchInput = searchInput;
-    this.searchBtn = searchBtn;
-    this.clearBtn = clearBtn;
+    const doSearchBtn = searchGroup.createEl("button", { cls: "datashow-toolbar__btn", text: "搜索" });
+    doSearchBtn.addEventListener("click", () => applySearch());
+    const doClearBtn = searchGroup.createEl("button", { cls: "datashow-toolbar__btn", text: "清空" });
+    doClearBtn.addEventListener("click", () => clearSearch());
+    searchInput = input;
+    searchBtn = doSearchBtn;
+    clearBtn = doClearBtn;
 
     toolbar.createDiv({ cls: "datashow-toolbar__spacer" });
     toolbar
       .createEl("button", { cls: "datashow-toolbar__btn", text: "刷新" })
-      .addEventListener("click", () => this.renderResult(false));
+      .addEventListener("click", () => renderResult(false));
     toolbar.createSpan({ cls: "datashow-toolbar__label", text: "视图" });
     const select = toolbar.createEl("select", { cls: "datashow-toolbar__select" }) as HTMLSelectElement;
     // R6 下拉选项：跟随语句 / 表格 / 列表 / 卡片
@@ -196,75 +189,40 @@ export class DatashowPanelView extends ItemView {
       if (newType === "") {
         // 跟随语句：仅清空 viewType，SQL 不动
         board.viewType = "";
-        void this.plugin.saveSettings();
-        this.renderResult();
+        void deps.saveSettings();
+        renderResult();
         return;
       }
       // 强制覆盖：用 applyViewType 同步 SQL 开头关键词与 viewType
       applyViewType(board, newType);
       // 同步回编辑器
       textarea.value = board.sql;
-      void this.plugin.saveSettings();
-      this.renderResult();
+      void deps.saveSettings();
+      renderResult();
     });
-    this.viewSelect = select;
+    viewSelect = select;
 
     // ---- 结果区（独立刷新） ----
-    this.resultWrap = root.createDiv({ cls: "datashow-result" });
-    this.renderResult(false);
+    resultWrap = root.createDiv({ cls: "datashow-result" });
+    renderResult(false);
   }
-
-  /** 编辑防抖自动保存。 */
-  private scheduleSave(): void {
-    if (this.saveTimer != null) window.clearTimeout(this.saveTimer);
-    this.saveTimer = window.setTimeout(() => this.flushSave(), 500);
-  }
-
-  private flushSave(): void {
-    if (this.saveTimer != null) {
-      window.clearTimeout(this.saveTimer);
-      this.saveTimer = null;
-    }
-    void this.plugin.saveSettings();
-    // R3 反向同步：保存时若 SQL 开头有合法视图关键词，自动切下拉
-    this.syncSelectFromSql();
-  }
-
-  /**
-   * R3 反向同步：读取当前 board.sql，按 detectTypeFromSql 判断是否要切下拉。
-   * - 返回非空 + 与 board.viewType 不一致 → 切下拉并设 board.viewType
-   * - 返回 null → 下拉保持当前状态（不强制切到跟随语句）
-   *   若 board.viewType 为空也不动，让用户继续编辑
-   */
-  private syncSelectFromSql(): void {
-    const board = this.currentBoard();
-    if (!board || !this.viewSelect) return;
-    const detected = detectTypeFromSql(board.sql);
-    if (detected && detected !== board.viewType) {
-      board.viewType = detected;
-      this.viewSelect.value = detected;
-      void this.plugin.saveSettings();
-    }
-  }
-
-  /** 当前结果区标签页（每次重跑回到「查询结果」）。 */
-  private resultTab: "result" | "debug" = "result";
 
   /**
    * 只重跑查询结果区（不动编辑器）。
+   *
    * @param keepTab - true 时保留当前标签页状态；false 时强制切到「查询结果」
    */
-  private renderResult(keepTab: boolean = false): void {
-    if (!this.resultWrap || !this.resultWrap.isShown()) return;
-    const board = this.currentBoard();
+  function renderResult(keepTab: boolean = false): void {
+    if (!resultWrap || !isVisible()) return;
+    const board = currentBoard();
     if (!board) return;
 
     // 仅当不保留时才重置为结果页（看板切换或手动刷新）
     if (!keepTab) {
-      this.resultTab = "result";
+      resultTab = "result";
     }
 
-    const wrap = this.resultWrap;
+    const wrap = resultWrap;
     wrap.empty();
 
     const sql = board.sql.trim();
@@ -280,10 +238,10 @@ export class DatashowPanelView extends ItemView {
     let error: string | null = null;
     try {
       query = parseQuery(sql);
-      result = executeQuery(query, this.plugin.store.all(), null, {
-        debug: this.plugin.settings.showDebug,
+      result = executeQuery(query, deps.rows.all(), null, {
+        debug: deps.settings().showDebug,
         // DSQL 1.5：摄取期容错警告（如重复键剔除的文件）随调试信息输出
-        ingestWarnings: this.plugin.store.ingestWarnings(),
+        ingestWarnings: deps.rows.ingestWarnings(),
       });
     } catch (err) {
       error = err instanceof QueryParseError ? err.message : String((err as Error).message ?? err);
@@ -297,14 +255,14 @@ export class DatashowPanelView extends ItemView {
     const btnDebug = hasDebug
       ? tabs.createEl("button", { cls: "datashow-tabs__tab", text: "调试信息" })
       : null;
-    this.resultTab = "result";
+    resultTab = "result";
 
     const renderPane = (): void => {
       content.empty();
-      btnResult.toggleClass("is-active", this.resultTab === "result");
-      btnDebug?.toggleClass("is-active", this.resultTab === "debug");
-      if (this.resultTab === "debug" && btnDebug && result?.debug) {
-        this.renderDebug(content, result.debug);
+      btnResult.toggleClass("is-active", resultTab === "result");
+      btnDebug?.toggleClass("is-active", resultTab === "debug");
+      if (resultTab === "debug" && btnDebug && result?.debug) {
+        renderDebug(content, result.debug);
         return;
       }
       content.createDiv({ cls: "datashow-result__label", text: "查询结果" });
@@ -314,7 +272,7 @@ export class DatashowPanelView extends ItemView {
           ? board.viewType
           : result?.view ?? detectTypeFromSql(sql) ?? "TABLE_VIEW";
       // 搜索控件按视图联动启用/禁用（出错/0 行时也要同步，避免控件卡在上次状态）
-      this.syncSearchControls(view);
+      syncSearchControls(view);
       if (error || !result || !query) {
         if (error) content.createDiv({ cls: "datashow-result__error", text: error });
         return;
@@ -323,29 +281,29 @@ export class DatashowPanelView extends ItemView {
         content.createDiv({ cls: "datashow-result__empty", text: "查询结果为空（0 行）。" });
         return;
       }
-      this.renderResultByView(content, view, query.withoutId, result);
+      renderResultByView(content, view, query.withoutId, result);
       // 仅卡片视图应用搜索过滤
-      if (view === "CARD_VIEW") this.applyFilter();
+      if (view === "CARD_VIEW") applyFilter();
     };
     btnResult.addEventListener("click", () => {
-      this.resultTab = "result";
+      resultTab = "result";
       renderPane();
     });
     btnDebug?.addEventListener("click", () => {
-      this.resultTab = "debug";
+      resultTab = "debug";
       renderPane();
     });
     renderPane();
   }
 
   /** 按 view 分派到 TableView / ListView / CardView（v2.0 三视图平等） */
-  private renderResultByView(wrap: HTMLElement, view: ViewType, withoutId: boolean, result: ResultSet): void {
-    const decimalPlaces = this.plugin.settings.decimalPlaces;
+  function renderResultByView(wrap: HTMLElement, view: ViewType, withoutId: boolean, result: ResultSet): void {
+    const decimalPlaces = deps.settings().decimalPlaces;
     const onOpenFile = (row: DataRow): void => {
-      void this.app.workspace.openLinkText(row.path, "", false);
+      void deps.opener.openFile(row.path);
     };
     const onSaveField = (row: DataRow, fieldPath: string, value: FieldValue): Promise<void> =>
-      this.saveFrontmatterField(row, fieldPath, value);
+      deps.frontmatter.setField(row.path, fieldPath, value);
 
     let viewEl: HTMLElement;
     if (view === "CARD_VIEW") {
@@ -359,33 +317,33 @@ export class DatashowPanelView extends ItemView {
   }
 
   /** 应用搜索：保留输入框当前值，重跑结果区以重新套用过滤。 */
-  private applySearch(): void {
-    if (!this.searchInput) return;
-    this.searchTerm = this.searchInput.value;
-    this.renderResult();
+  function applySearch(): void {
+    if (!searchInput) return;
+    searchTerm = searchInput.value;
+    renderResult();
   }
 
   /** 清空搜索：清空输入框与搜索词，重跑结果区恢复全部卡片。 */
-  private clearSearch(): void {
-    this.searchTerm = "";
-    if (this.searchInput) this.searchInput.value = "";
-    this.renderResult();
+  function clearSearch(): void {
+    searchTerm = "";
+    if (searchInput) searchInput.value = "";
+    renderResult();
   }
 
   /**
-   * 卡片视图搜索过滤（DOM 后置过滤，不动 card-view.ts）：
+   * 卡片视图搜索过滤（DOM 后置过滤，不动 card-view）：
    * 遍历 .datashow-card，按 textContent 不区分大小写子串匹配隐藏不匹配卡片；
    * 搜索词非空且全部隐藏时显示「没有匹配的卡片」提示。
    */
-  private applyFilter(): void {
-    const container = this.resultWrap;
+  function applyFilter(): void {
+    const container = resultWrap;
     const kanban = container?.querySelector<HTMLElement>(".datashow-kanban");
     if (!kanban) return;
 
     // 清掉上一次搜索的空结果提示
     kanban.parentElement?.querySelector(".datashow-search__empty")?.remove();
 
-    const term = this.searchTerm.trim().toLowerCase();
+    const term = searchTerm.trim().toLowerCase();
     let visible = 0;
     kanban.querySelectorAll<HTMLElement>(".datashow-card").forEach((card) => {
       const text = (card.textContent ?? "").toLowerCase();
@@ -407,38 +365,23 @@ export class DatashowPanelView extends ItemView {
    * - 卡片视图：输入框/搜索/清空均启用
    * - 表格/列表视图：禁用并清空搜索词（恢复全部数据）
    */
-  private syncSearchControls(view: ViewType): void {
+  function syncSearchControls(view: ViewType): void {
     const isCard = view === "CARD_VIEW";
-    if (this.searchInput) {
-      this.searchInput.disabled = !isCard;
-      this.searchInput.classList.toggle("is-disabled", !isCard);
+    if (searchInput) {
+      searchInput.disabled = !isCard;
+      searchInput.classList.toggle("is-disabled", !isCard);
     }
-    if (this.searchBtn) this.searchBtn.disabled = !isCard;
-    if (this.clearBtn) this.clearBtn.disabled = !isCard;
+    if (searchBtn) searchBtn.disabled = !isCard;
+    if (clearBtn) clearBtn.disabled = !isCard;
     if (!isCard) {
       // 离开卡片视图 → 清空搜索词
-      this.searchTerm = "";
-      if (this.searchInput) this.searchInput.value = "";
+      searchTerm = "";
+      if (searchInput) searchInput.value = "";
     }
-  }
-
-  /**
-   * 卡片字段保存：调 processFrontMatter 原子写回，索引增量更新由 metadataCache 事件触发
-   * @throws 当文件不存在或非 Markdown 文件时抛出错误
-   */
-  private async saveFrontmatterField(row: DataRow, fieldPath: string, value: FieldValue): Promise<void> {
-    const f = this.app.vault.getFileByPath(row.path);
-    if (!(f instanceof TFile) || f.extension !== "md") {
-      throw new Error(`文件 "${row.path}" 不存在或不是 Markdown 文件，无法保存。`);
-    }
-    await this.app.fileManager.processFrontMatter(f, (fm) => {
-      fm[fieldPath] = value;
-    });
-    // 成功：由 metadataCache 事件触发重渲染
   }
 
   /** 调试信息（逐操作 + 字段缺失 + 警告 + 数据源统计 + 耗时） */
-  private renderDebug(wrap: HTMLElement, dbg: QueryDebug): void {
+  function renderDebug(wrap: HTMLElement, dbg: QueryDebug): void {
     const entries: { op: string; message: string; warn?: boolean }[] = [
       { op: "FROM", message: dbg.from },
     ];
@@ -473,4 +416,18 @@ export class DatashowPanelView extends ItemView {
       li.createSpan({ text: entry.message });
     }
   }
+
+  return {
+    async mount(): Promise<void> {
+      unsubBoards = deps.onBoardsChange(() => onExternalChange());
+      unsubStore = deps.rows.subscribe(() => renderResult(true));
+      if (getBoardId()) await render();
+    },
+    render,
+    dispose(): void {
+      flushSave();
+      unsubBoards?.();
+      unsubStore?.();
+    },
+  };
 }

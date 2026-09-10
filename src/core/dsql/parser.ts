@@ -12,7 +12,7 @@
 
 import type { BinOp, ColumnSel, Expr, Query, SortClause, SortKey, Source } from "./ast";
 import { FUNCTIONS, Lexer, type Token } from "./lexer";
-import type { FieldValue, ViewType } from "@dsql/types";
+import type { FieldValue, ViewType } from "./types";
 
 /** 查询解析错误：message 已格式化为「[DSQL] 第 x 行第 y 列：原因」。 */
 export class QueryParseError extends Error {
