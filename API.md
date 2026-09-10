@@ -133,6 +133,8 @@ findDuplicateKeys(content): { field: string; rawLines: string[] }[];
 `src/host/types.ts` 是 **宿主接口与依赖契约的唯一出口**，所有跨层能力均经本文件声明；
 `src/host/obsidian/` 实现适配器，`src/main.ts` 装配注入，业务层只认接口。
 
+**七条宿主接口**：
+
 | 接口 | 用途 | 关键方法 |
 |---|---|---|
 | `IVaultHost` | 数据源：列文件、读元数据与正文、订阅变更 | `listMarkdownFiles()` / `readFrontmatter(path)` / `getOutlinks(path)` / `getInlinks(path)` / `readText(path)` / `subscribe(handlers)` |
@@ -142,7 +144,9 @@ findDuplicateKeys(content): { field: string; rawLines: string[] }[];
 | `IYamlCodec` | YAML 编解码 | `parse(text)` / `stringify(value)` |
 | `IStorageHost` | 带 key 的持久化槽位 | `load<T>(key)` / `save(key, data)` |
 | `IUiHost` | 用户反馈与日志 | `notify(msg)` / `warn(msg)` / `error(msg)` |
-| `IRowSource` | UI 只读数据视图 | `all(): DataRow[]` / `ingestWarnings()` / `subscribe(cb)` |
+
+另有 `IRowSource`（`core/index/store.ts` 的只读数据视图，非宿主接口）：
+`all(): DataRow[]` / `ingestWarnings()` / `subscribe(cb)`，供 UI 层消费行仓库快照。
 
 **读写约定**：读路径失败一律返回 `null`（core 内不抛不 try）；写路径失败以 `reject(Error)` 上抛。
 
