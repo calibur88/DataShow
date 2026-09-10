@@ -1,7 +1,7 @@
 # DataShow API 文档
 
 分两部分：**官方 API**（Obsidian 提供、本插件用到的接口）与**插件 API**（DataShow 自身导出、
-可供二次开发 / 测试使用的接口）。示例均基于当前版本（插件 2.1.2，DSQL 2.0，minAppVersion 1.4.4）。
+可供二次开发 / 测试使用的接口）。示例均基于当前版本（插件 2.1.4，DSQL 2.0，minAppVersion 1.4.4）。
 
 ---
 
@@ -127,3 +127,34 @@ findDuplicateKeys(content): { field: string; rawLines: string[] }[];
   `src/render/table-view.ts` / `list-view.ts` / `card-view.ts`，新增视图类型在此扩展；
 - 视图与 SQL 双向同步工具：`src/utils/viewSync.ts` 的
   `applyViewType(board, type)` / `detectTypeFromSql(sql)` / `normalizeSqlView(sql, type)`（均为纯函数）。
+
+### 6. host 层接口与依赖注入（v2.1.4 新增）
+
+`src/host/types.ts` 是 **宿主接口与依赖契约的唯一出口**，所有跨层能力均经本文件声明；
+`src/host/obsidian/` 实现适配器，`src/main.ts` 装配注入，业务层只认接口。
+
+| 接口 | 用途 | 关键方法 |
+|---|---|---|
+| `IVaultHost` | 数据源：列文件、读元数据与正文、订阅变更 | `listMarkdownFiles()` / `readFrontmatter(path)` / `getOutlinks(path)` / `getInlinks(path)` / `readText(path)` / `subscribe(handlers)` |
+| `IOpener` | 打开笔记 | `openFile(path, opts?)` |
+| `IFrontmatterHost` | 属性数据侧读写（不含 UI） | `read(path)` / `setField(path, field, value)` / `replaceAll(path, fields)` |
+| `IFrontmatterEditor` | 属性编辑弹窗（UI 侧） | `openEditor(path, onSaved)` |
+| `IYamlCodec` | YAML 编解码 | `parse(text)` / `stringify(value)` |
+| `IStorageHost` | 带 key 的持久化槽位 | `load<T>(key)` / `save(key, data)` |
+| `IUiHost` | 用户反馈与日志 | `notify(msg)` / `warn(msg)` / `error(msg)` |
+| `IRowSource` | UI 只读数据视图 | `all(): DataRow[]` / `ingestWarnings()` / `subscribe(cb)` |
+
+**读写约定**：读路径失败一律返回 `null`（core 内不抛不 try）；写路径失败以 `reject(Error)` 上抛。
+
+**依赖契约**（UI 层通过 Deps 获得宿主能力，不直接引用插件类或宿主实例）：
+
+| 契约 | 使用者 | 含有的能力 |
+|---|---|---|
+| `PanelDeps` | `render/panel-view.ts` → `views/panel.ts` | `rows` + `settings()` + `saveSettings()` + `onBoardsChange()` + `opener` + `frontmatter` + `editor` + `ui` |
+| `SidebarDeps` | `render/sidebar-view.ts` → `views/sidebar.ts` | `settings()` + `saveSettings()` + `openBoard()` + `onBoardsChange()` |
+| `SettingsTabDeps` | `views/settings-tab.ts` | `settings()` + `saveSettings()` + `defaultBoards()` |
+
+**移植提示**：换宿主只需重写 `main.ts` + `views/` + `host/obsidian/`（实现全部七条接口），
+`core/` / `controller/` / `render/` / `settings/` / `utils/` 逐字不动；
+另需宿主提供 `HTMLElement` 的 `createDiv` / `createEl` / `createSpan` / `addClass` / `toggleClass` / `isShown` 等原型扩展
+（或改用 `utils/dom` 的等价实现）。
