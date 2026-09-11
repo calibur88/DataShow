@@ -10,7 +10,7 @@
   },
   "keywords": [],
   "author": "calibur88",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "devDependencies": {
     "@types/node": "^22.10.0",
     "esbuild": "^0.24.0",
