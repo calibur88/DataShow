@@ -66,11 +66,41 @@ npm run build   # 类型检查 + 生产构建
 ```
 
 1. 在根目录 `src/` 中开发，涉及语法或语义的改动同步更新 `tests/` 对应用例；
-2. `npm test` + `npm run build` 通过后，用 Obsidian 打开 `test-vault-local/` 实际验收；
+2. `npm test` + `npm run build` 通过后，用 Obsidian 打开 `test-vault-local/` 实际验收
+   （可用 Obsidian 命令行做无人值守验收，见 §4.1）；
 3. 验收通过后更新 CHANGELOG 与相关文档，再提交 git。
 
 > 验证看板 SQL 不能直接用 `node` 跑 TS：`src/core/dsql/parser.ts` 用了参数属性，
 > 必须经 esbuild 打包（见 `scripts/test.mjs`）。
+
+### 4.1 Obsidian 命令行（实机验收）
+
+Obsidian 自带 CLI（`D:\Obsidian\Obsidian.com`，已加入 PATH，可直接 `obsidian` 调用），
+用 `vault=` 指定目标库，可在无人工干预下完成实机验收：
+
+```bash
+obsidian vault=test-vault-local version                       # 确认 CLI 可用
+obsidian vault=test-vault-local plugin:reload id=data-show    # 重载插件（加载新构建与新看板）
+obsidian vault=test-vault-local tabs                          # 列出打开的标签页
+obsidian vault=test-vault-local eval 'code=...'               # 应用内执行 JS
+obsidian vault=test-vault-local dev:dom 'selector=...' text   # 查询 DOM 做渲染断言
+obsidian vault=test-vault-local dev:screenshot 'path=x.png'   # 截图留档
+obsidian vault=test-vault-local dev:errors                    # 查看捕获的错误
+```
+
+常用验收组合：`eval` 打开看板（`app.plugins.plugins["data-show"].openBoard("看板id")`）→
+`dev:dom` 断言 `.datashow-result` 的渲染内容 → `dev:screenshot` 视觉留档。
+
+> **改 `data.json` 的安全顺序**：插件运行中会把内存设置写回 `data.json`，直接改文件会被覆盖。
+> 必须按 `plugin:disable` → 修改文件 → `plugin:enable` 的顺序执行。
+
+### 4.2 文件编辑规范：同一文件禁止并行调用 Edit
+
+- **同一文件禁止并行调用 Edit**：每个 Edit 都是「读-改-写」整文件，后写会**静默覆盖先写**
+  （lost update）——两个并行 Edit 可能各自报成功，但结果只保留其中一个；
+- 批量修改请改用**脚本顺序执行**（node / sed 等），完成后以 `git diff` 核验工作区，
+  确认全部改动落盘且无互相覆盖；
+- Edit 与脚本混用改同一文件时同理：脚本写入后，下次 Edit 前必须重新 Read。
 
 ## 5. 文档更新规范（变更时必须同步的清单）
 
