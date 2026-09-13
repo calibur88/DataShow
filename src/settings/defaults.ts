@@ -37,6 +37,7 @@ export const DEFAULT_SETTINGS: DatashowSettings = {
   openInNewTab: true,
   showDebug: false,
   decimalPlaces: 4,
+  failedFileListLimit: 3,
   boards: [makeDefaultBoard()],
   collapsedGroups: [],
   schemaVersion: CONTENT_SCHEMA_VERSION,

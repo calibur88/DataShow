@@ -53,6 +53,12 @@ export function normalizeSettings(raw: unknown): DatashowSettings {
     openInNewTab: typeof src.openInNewTab === "boolean" ? src.openInNewTab : DEFAULT_SETTINGS.openInNewTab,
     showDebug: typeof src.showDebug === "boolean" ? src.showDebug : DEFAULT_SETTINGS.showDebug,
     decimalPlaces: Number.isFinite(decimal) && decimal >= 0 && decimal <= 100 ? Math.floor(decimal) : 4,
+    failedFileListLimit:
+      typeof src.failedFileListLimit === "number" &&
+      Number.isInteger(src.failedFileListLimit) &&
+      src.failedFileListLimit >= 1
+        ? src.failedFileListLimit
+        : DEFAULT_SETTINGS.failedFileListLimit,
     boards: Array.isArray(src.boards)
       ? src.boards.map((b) => normalizeBoard((b ?? {}) as Record<string, unknown>))
       : DEFAULT_SETTINGS.boards.map((b) => normalizeBoard(b as unknown as Record<string, unknown>)),

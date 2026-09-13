@@ -133,7 +133,7 @@ findDuplicateKeys(content): { field: string; rawLines: string[] }[];
 `src/host/types.ts` 是 **宿主接口与依赖契约的唯一出口**，所有跨层能力均经本文件声明；
 `src/host/obsidian/` 实现适配器，`src/main.ts` 装配注入，业务层只认接口。
 
-**七条宿主接口**：
+**八条宿主接口**：
 
 | 接口 | 用途 | 关键方法 |
 |---|---|---|
@@ -144,6 +144,7 @@ findDuplicateKeys(content): { field: string; rawLines: string[] }[];
 | `IYamlCodec` | YAML 编解码 | `parse(text)` / `stringify(value)` |
 | `IStorageHost` | 带 key 的持久化槽位 | `load<T>(key)` / `save(key, data)` |
 | `IUiHost` | 用户反馈与日志 | `notify(msg)` / `warn(msg)` / `error(msg)` |
+| `IExtSourceHost` | [ext] 文件级读取（查询级，无常驻状态） | `listFiles(folderPaths)` / `readMd(path)` / `readNonMdText(path)` |
 
 另有 `IRowSource`（`core/index/store.ts` 的只读数据视图，非宿主接口）：
 `all(): DataRow[]` / `ingestWarnings()` / `subscribe(cb)`，供 UI 层消费行仓库快照。
@@ -154,11 +155,11 @@ findDuplicateKeys(content): { field: string; rawLines: string[] }[];
 
 | 契约 | 使用者 | 含有的能力 |
 |---|---|---|
-| `PanelDeps` | `render/panel-view.ts` → `views/panel.ts` | `rows` + `settings()` + `saveSettings()` + `onBoardsChange()` + `opener` + `frontmatter` + `editor` + `ui` |
+| `PanelDeps` | `render/panel-view.ts` → `views/panel.ts` | `rows` + `settings()` + `saveSettings()` + `onBoardsChange()` + `onVaultChange()` + `extSource` + `codec` + `opener` + `frontmatter` + `editor` + `ui` |
 | `SidebarDeps` | `render/sidebar-view.ts` → `views/sidebar.ts` | `settings()` + `saveSettings()` + `openBoard()` + `onBoardsChange()` |
 | `SettingsTabDeps` | `views/settings-tab.ts` | `settings()` + `saveSettings()` + `defaultBoards()` |
 
-**移植提示**：换宿主只需重写 `main.ts` + `views/` + `host/obsidian/`（实现全部七条接口），
+**移植提示**：换宿主只需重写 `main.ts` + `views/` + `host/obsidian/`（实现全部八条接口），
 `core/` / `controller/` / `render/` / `settings/` / `utils/` 逐字不动；
 另需宿主提供 `HTMLElement` 的 `createDiv` / `createEl` / `createSpan` / `addClass` / `toggleClass` / `isShown` 等原型扩展
 （或改用 `utils/dom` 的等价实现）。

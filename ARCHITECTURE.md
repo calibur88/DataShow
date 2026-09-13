@@ -1,6 +1,6 @@
 # DataShow 整体架构
 
-> 本文是工程的权威架构说明。当前版本：插件 **2.1.4** · 语言 **DSQL 2.0** · minAppVersion **1.4.4**。
+> 本文是工程的权威架构说明。当前版本：插件 **2.1.4** · 语言 **DSQL 2.1** · minAppVersion **1.4.4**。
 
 ## 1. 项目定位
 
@@ -22,7 +22,7 @@ DataShow 是面向 Obsidian 的元数据看板插件：
 根目录/
 ├── src/                 插件源码（唯一入口 src/main.ts；按 host / core / controller /
 │                        render / views / settings / utils 分层，详见 §3）
-├── tests/               单元测试（七套件）
+├── tests/               单元测试（八套件）
 ├── scripts/test.mjs     测试运行器
 ├── docs/                DSQL 语言规范
 ├── dist/                构建产物（不入库）
@@ -40,7 +40,7 @@ DataShow 是面向 Obsidian 的元数据看板插件：
 | `test-vault-local/` | 日常在 Obsidian 中实际验收（看板加载、查询、视图切换、卡片编辑）。测试产生的改动都留在这里 | ❌（`.gitignore` 排除） |
 | `test-vault/` | 干净版本，仅用于版本提交，不用于日常测试 | ✅ |
 
-两者预置看板一致，按 功能示例 / 数学示例 / DSQL语言示例 / 三值示例 四大类组织，示例数据在 `示例/` 下。
+两者预置看板一致，按 功能示例 / 数学示例 / DSQL语言示例 / 三值示例 / 跨文件示例 / 跨文件夹示例 / ext示例 七大类组织，示例数据在 `示例/` 下。
 看板定义存于 `.obsidian/plugins/data-show/data.json`（**纳入版本控制**，是含全部 DSQL 的核心资产）；
 插件构建产物（`main.js` / `manifest.json` / `styles.css`）由 esbuild 自动同步进库，**不入库**。
 
@@ -55,9 +55,11 @@ main.ts                 装配：new 宿主适配器 → new 索引器 → regis
  ├─ host/
  │   ├─ types.ts        唯一类型出口：宿主接口与依赖契约（IFileMeta / IVaultHost / IOpener /
  │   │                  IFrontmatterHost / IFrontmatterEditor / IYamlCodec / IStorageHost /
- │   │                  IUiHost / IRowSource / PanelDeps / SidebarDeps / SettingsTabDeps）
+ │   │                  IUiHost / IExtSourceHost / IRowSource / PanelDeps / SidebarDeps /
+ │   │                  SettingsTabDeps）
  │   └─ obsidian/       宿主适配器（import "obsidian" 的合法位置之一）
  │       ├─ vault-host.ts        metadataCache + vault → IVaultHost（反向链接按事件失效、惰性重算）
+ │       ├─ ext-source-host.ts   vault 全文件列表 + metadataCache + cachedRead → IExtSourceHost
  │       ├─ opener.ts            workspace.openLinkText → IOpener
  │       ├─ frontmatter-host.ts  processFrontMatter → IFrontmatterHost（数据侧）
  │       ├─ frontmatter-modal.ts Modal → IFrontmatterEditor（UI 侧：属性编辑弹窗）
@@ -71,7 +73,9 @@ main.ts                 装配：new 宿主适配器 → new 索引器 → regis
  │   └─ index/
  │       ├─ store.ts     行仓库：缓存 + 变更通知 + 摄取警告归档
  │       ├─ row-builder.ts   IFileMeta + frontmatter → DataRow（摄取归一）
- │       └─ frontmatter.ts   原文扫描：frontmatter 顶层重复键检测
+ │       ├─ frontmatter.ts   原文扫描：frontmatter 顶层重复键检测
+ │       ├─ yaml-fallback.ts 自研 YAML 子集解析器（零依赖纯函数，只服务非 md 路径）
+ │       └─ ext-source.ts    [ext] 文件级读取：FROM 目录收集 → 按后缀分派两条解析路径
  ├─ controller/
  │   └─ indexer.ts       索引器：订阅 IVaultHost → 构造行 → 写 DataStore（300ms 防抖）
  ├─ render/              纯 UI（只吃 Deps，零 obsidian import）
@@ -138,7 +142,7 @@ main ──► views ──► render ──► controller ──► core ──
 npm install
 npm run dev     # watch 模式：src / manifest.json / styles.css 变化即重建，并同步到两个测试库
 npm run build   # tsc 类型检查 + esbuild 生产构建 → dist/main.js
-npm test        # 单测七套件（零 Obsidian 依赖）
+npm test        # 单测八套件（零 Obsidian 依赖）
 ```
 
 - **构建流程**：`esbuild.config.mjs` 以 `src/main.ts` 为入口，产出 `dist/main.js`；
@@ -151,7 +155,7 @@ npm test        # 单测七套件（零 Obsidian 依赖）
   > 验证看板 SQL 不能直接用 `node` 跑 TS：`src/core/dsql/parser.ts` 用了参数属性
   > （`constructor(private tokens: Token[])`），node 的 strip-only 模式不支持，必须经 esbuild 打包。
 
-- **测试套件**（共 106 例）：
+- **测试套件**（共 166 例）：
 
 | 套件 | 领域 | 例数 |
 |---|---|---|
@@ -160,6 +164,7 @@ npm test        # 单测七套件（零 Obsidian 依赖）
 | `tests/dsql-language.test.ts` | DSQL 语言示例（词法、语法、错误路径） | 22 |
 | `tests/store.test.ts` | 行仓库（增删改、订阅通知） | 4 |
 | `tests/ingest.test.ts` | 摄取层（重复键、摄取归一、摄取警告） | 4 |
+| `tests/ext-source.test.ts` | [ext] 后缀过滤（语法、三态、分派、范围、求值、自研解析器） | 60 |
 | `tests/viewSync.test.ts` | 视图与 SQL 双向同步 | 15 |
 | `tests/normalizeBoard.test.ts` | 看板字段校形 | 10 |
 

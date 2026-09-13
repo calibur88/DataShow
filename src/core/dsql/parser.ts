@@ -14,6 +14,13 @@ import type { BinOp, ColumnSel, Expr, Query, SortClause, SortKey, Source } from 
 import { FUNCTIONS, Lexer, type Token } from "./lexer";
 import type { FieldValue, ViewType } from "./types";
 
+/** [ext] 内容 → 后缀列表：`[]` → 空数组（ALL 语义）；其余按逗号切、逐段 trim，原样保留不归一化 */
+function parseExts(raw: string): string[] {
+  const trimmed = raw.trim();
+  if (trimmed === "") return [];
+  return raw.split(",").map((part) => part.trim());
+}
+
 /** 查询解析错误：message 已格式化为「[DSQL] 第 x 行第 y 列：原因」。 */
 export class QueryParseError extends Error {
   constructor(
@@ -40,6 +47,8 @@ class Parser {
   private pos = 0;
   /** 是否处于 SELECT 列表内（DSQL 1.4：$变量$ 仅在 SELECT 中可引用） */
   private inSelect = false;
+  /** 是否处于 WHERE 表达式内（[ext] 后缀过滤仅在此合法） */
+  private inWhere = false;
   private variableTokens = new Map<string, Token>();
   /** DSQL 1.5：AS 别名 → 首次定义的 token（重复定义校验用） */
   private aliasTokens = new Map<string, Token>();
@@ -82,7 +91,12 @@ class Parser {
         this.expectOnce(seen, "WHERE");
         this.requirePrerequisite(seen, "WHERE", "FROM");
         this.advance();
-        where = this.parseExpr();
+        this.inWhere = true;
+        try {
+          where = this.parseExpr();
+        } finally {
+          this.inWhere = false;
+        }
       } else if (this.isMarked("SORT")) {
         this.expectOnce(seen, "SORT");
         this.requirePrerequisite(seen, "SORT", "FROM");
@@ -271,6 +285,9 @@ class Parser {
       return inner;
     }
     const tok = this.peek();
+    if (tok.type === "extfilter") {
+      throw this.err(tok, "[ext] 后缀过滤仅可在 **WHERE** 表达式中使用（**FROM** 数据源应为 \"文件夹路径\" 或 #标签）");
+    }
     if (tok.type === "path") {
       this.advance();
       return { kind: "folder", path: tok.value.replace(/[\\/]+$/, "") };
@@ -350,13 +367,34 @@ class Parser {
   }
 
   private parseComparison(): Expr {
-    const left = this.parseConcat();
+    const first = this.parseConcat();
+    // [ext] 并置简写（规范 §3 定稿示例）：[txt] status %==% 'x' ≡ [txt] **AND** status %==% 'x'；
+    // 右侧解析为完整比较链（含比较符），隐式 AND 与显式 **AND** 同优先级
+    if (first.kind === "extFilter" && this.startsPrimary()) {
+      let left: Expr = first;
+      while (left.kind === "extFilter" && this.startsPrimary()) {
+        left = { kind: "binary", op: "and", left, right: this.parseComparison() };
+      }
+      return left;
+    }
+    const left = first;
     const tok = this.peek();
     if (tok.type === "op" && ["==", "!=", ">", "<", ">=", "<="].includes(tok.value)) {
       this.advance();
       return { kind: "binary", op: tok.value as BinOp, left, right: this.parseConcat() };
     }
     return left; // 裸操作数：真值判断（如 **contains**(...)、布尔字段）
+  }
+
+  /** 当前 token 是否能开启一个 primary（并置简写的右端判定） */
+  private startsPrimary(): boolean {
+    const tok = this.peek();
+    if (tok.type === "extfilter" || tok.type === "ident" || tok.type === "string" ||
+        tok.type === "path" || tok.type === "number") {
+      return true;
+    }
+    if (tok.type === "marked" && FUNCTIONS.has(tok.value)) return true;
+    return tok.type === "punct" && tok.value === "(";
   }
 
   private parseConcat(): Expr {
@@ -406,6 +444,13 @@ class Parser {
   private parsePrimary(): Expr {
     const tok = this.peek();
 
+    if (tok.type === "extfilter") {
+      if (!this.inWhere) {
+        throw this.err(tok, "[ext] 后缀过滤仅可在 **WHERE** 表达式中使用");
+      }
+      this.advance();
+      return { kind: "extFilter", exts: parseExts(tok.value) };
+    }
     if (tok.type === "string" || tok.type === "path") {
       this.advance();
       return { kind: "lit", value: tok.value };
@@ -544,5 +589,6 @@ function describe(tok: Token): string {
   if (tok.type === "eof") return "文件结束";
   if (tok.type === "marked") return `**${tok.value}**`;
   if (tok.type === "op") return `%${tok.value}%`;
+  if (tok.type === "extfilter") return `[${tok.value.trim()}]`;
   return `「${tok.value}」`;
 }

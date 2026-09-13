@@ -55,6 +55,10 @@ export interface VaultEventHandlers {
   onDeleted?(path: string): void;
   /** 某文件被重命名 / 移动 */
   onRenamed?(oldPath: string, newPath: string): void;
+  /** 某文件内容被修改（vault 级，含非 md；[ext] 查询刷新兜底用，索引器不使用） */
+  onModified?(path: string): void;
+  /** 新建文件（vault 级，含非 md；[ext] 查询刷新兜底用，索引器不使用） */
+  onCreated?(path: string): void;
 }
 
 // ---------------------------------------------------------------------- 宿主接口
@@ -78,6 +82,19 @@ export interface IVaultHost {
 export interface IOpener {
   /** 打开笔记。newLeaf 为真时优先新标签页，否则复用已有标签页 */
   openFile(path: string, options?: { newLeaf?: boolean }): Promise<void>;
+}
+
+/**
+ * [ext] 文件级读取能力（查询级使用）。
+ * 仅在查询含 [ext] 时被调用；非 md 不缓存、不常驻、不监听、不进索引器。
+ */
+export interface IExtSourceHost {
+  /** 列出目录集合（含子目录）下的全部文件（md + 非 md），不做后缀过滤——后缀过滤在分派阶段做 */
+  listFiles(folderPaths: string[]): Promise<IFileMeta[]>;
+  /** md 官方路径：metadataCache 的 frontmatter（无则 null，不加任何兜底） */
+  readMd(path: string): Promise<Record<string, unknown> | null>;
+  /** 非 md 自研路径前置：cachedRead 原文；文件不存在（race）返回 null */
+  readNonMdText(path: string): Promise<string | null>;
 }
 
 /** YAML 编解码契约。宿主提供实现，core 只认本接口 */
@@ -143,6 +160,13 @@ export interface PanelDeps {
   saveSettings(): Promise<void>;
   /** 订阅看板（设置）变更；返回注销函数 */
   onBoardsChange(listener: () => void): () => void;
+  /** 订阅宿主文件变更（modify / create / delete / rename，含非 md）；返回注销函数。
+   *  仅 [ext] 查询用它做刷新兜底，由视图壳决定是否响应 */
+  onVaultChange(listener: () => void): () => void;
+  /** [ext] 文件级读取能力（查询级，无常驻状态） */
+  extSource: IExtSourceHost;
+  /** YAML 编解码（失败文件列表渲染用 stringify） */
+  codec: IYamlCodec;
   opener: IOpener;
   frontmatter: IFrontmatterHost;
   editor: IFrontmatterEditor;

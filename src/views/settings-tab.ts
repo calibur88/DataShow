@@ -77,6 +77,22 @@ export class DatashowSettingTab extends PluginSettingTab {
             await this.deps.saveSettings();
           }),
       );
+
+    new Setting(containerEl)
+      .setName("解析失效列表上限")
+      .setDesc("含 [ext] 的查询中解析失效文件列表最多显示的条数（结果区尾部）。只接受正整数，非法时恢复默认 3。")
+      .addText((text) =>
+        text
+          .setPlaceholder("3")
+          .setValue(String(this.deps.settings().failedFileListLimit))
+          .onChange(async (value) => {
+            const n = Number(value.trim());
+            // 只接受正整数（Number.isInteger && >= 1），不设上限；非法恢复默认 3
+            this.deps.settings().failedFileListLimit =
+              Number.isInteger(n) && n >= 1 ? n : 3;
+            await this.deps.saveSettings();
+          }),
+      );
   }
 
   private renderBoardManager(): void {

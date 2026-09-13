@@ -6,6 +6,7 @@
  * - 关键词/内置函数：**WORD** 包裹（关键词约定全大写，函数约定小写）
  * - 运算符：%op% 包裹（%==% %!=% %>=% %<=% %>% %<% %||% %+% %-% %*% %/% %%% %^%）
  * - 路径："..."（双引号）；字符串：'...'（单引号）
+ * - [ext] 后缀过滤：[...] 原样收集（仅 WHERE 表达式合法，parser 校验位置）
  * - 裸标识符：字段名（支持 Unicode 与带点路径 file.name / this.状态）
  * - 裸字面量：true / false / null
  *
@@ -22,6 +23,7 @@ export type TokenType =
   | "number"
   | "op"       // %op%
   | "punct"    // ( ) , # *
+  | "extfilter" // [ext] 后缀过滤（value 为括号内原样文本，不做归一化）
   | "eof";
 
 export interface Token {
@@ -102,6 +104,7 @@ export class Lexer {
     if (ch === '"') return this.readString('"', line, col);
     if (ch === "%") return this.readOp(line, col);
     if (ch === "*") return this.readStar(line, col);
+    if (ch === "[") return this.readExtFilter(line, col);
     if (DIGIT.test(ch)) return this.readNumber(line, col);
     if (ch === "$") {
       const variable = this.tryReadVariable(line, col);
@@ -217,6 +220,38 @@ export class Lexer {
       line,
       col,
     );
+  }
+
+  /**
+   * [ext] 后缀过滤：`[` 到配对 `]` 之间的内容原样收集（不做归一化），逗号切分与
+   * 空段处理由 parser 完成。未闭合（遇 EOF）为词法错误。
+   */
+  private readExtFilter(line: number, col: number): Token {
+    this.pos++;
+    this.col++;
+    let value = "";
+    for (;;) {
+      if (this.pos >= this.src.length) {
+        throw new LexError("[ 扩展名过滤未闭合（需以 ] 结束，如 [txt, mp4]）", line, col);
+      }
+      const ch = this.src[this.pos];
+      if (ch === "]") {
+        this.pos++;
+        this.col++;
+        break;
+      }
+      if (ch === "\n") {
+        this.line++;
+        this.col = 1;
+        value += " ";
+        this.pos++;
+        continue;
+      }
+      value += ch;
+      this.pos++;
+      this.col++;
+    }
+    return { type: "extfilter", value, line, col };
   }
 
   private readNumber(line: number, col: number): Token {

@@ -10,7 +10,7 @@
 - **插件版本**：`2.1.4`
 - **插件 ID**：`data-show`（唯一 ID，插件目录与 `manifest.json` 一致）
 - **最低 Obsidian 版本**：`1.4.4`
-- **DSQL 语言版本**：`2.0`（语言版本与插件版本各自独立，规范见 [docs/DSQL-语言规范.md](docs/DSQL-语言规范.md)）
+- **DSQL 语言版本**：`2.1`（v2.1 新增 `[ext]` 后缀过滤；语言版本与插件版本各自独立，规范见 [docs/DSQL-语言规范.md](docs/DSQL-语言规范.md)）
 
 > **版本兼容性**：`2.1.4` 为纯架构重构，行为零变化；DSQL 语法、视图渲染、看板定义均无改动，
 > 已有 `data.json` 可继续使用（旧扁平格式首次保存后自动升级为槽位结构）。
@@ -26,7 +26,7 @@ DataShow/
 ├── esbuild.config.mjs   构建 + 自动同步到两个测试库
 ├── styles.css           样式
 ├── src/                 插件源码（见下）
-├── tests/               单元测试（七套件，零 Obsidian 依赖）
+├── tests/               单元测试（八套件，零 Obsidian 依赖）
 ├── scripts/test.mjs     测试运行器（esbuild 打包后交给 node）
 ├── docs/                DSQL 语言规范
 ├── dist/                构建产物（不入库）
@@ -44,7 +44,7 @@ src/
 ├── core/           可移植核心（零 Obsidian 依赖）
 │   ├── dsql/       DSQL 语言层（别名 @dsql，独立 tsconfig）：types.ts 语言层类型出口
 │   │               （含 ViewType 与 EMPTY 哨兵）+ lexer / parser / ast / functions / executor
-│   └── index/      行仓库 / 行构造 / frontmatter 原文扫描（别名 @index）
+│   └── index/      行仓库 / 行构造 / frontmatter 原文扫描 / [ext] 文件级分派与自研 YAML 解析（别名 @index）
 ├── controller/     索引器：宿主事件 → 行仓库
 ├── render/         纯 UI：面板 / 侧栏 + 表格·列表·卡片三视图
 ├── views/          Obsidian 视图壳（panel / sidebar / settings-tab）+ 视图类型常量
@@ -63,7 +63,7 @@ src/
 npm install
 npm run build   # tsc 类型检查 + 产出 dist/main.js，并自动同步到两个测试库
 npm run dev     # watch 模式：src / manifest.json / styles.css 变化即重建并同步
-npm test        # 单测七套件，共 106 例
+npm test        # 单测八套件，共 166 例
 ```
 
 构建产物（`main.js` / `manifest.json` / `styles.css`）由 `esbuild.config.mjs` 自动同步到
@@ -103,6 +103,9 @@ npm test        # 单测七套件，共 106 例
 
 - 数据源：`"文件夹"`（含子文件夹）、`#标签`，`**OR**` / `**AND**` 组合（AND 优先）；
 - 表达式：四则与乘方（`%^%` 右结合）、连接 `%||%`、比较 `%==%` 族、`**AND**` / `**OR**` / `**NOT**`；
+- 非 md 数据源：`**WHERE**` 中写 `[txt, mp4]` / `[]` 后缀过滤，把 FROM 目录下的非 md 文件
+  （自研 YAML 子集解析）接入查询，md 文件仍走官方解析；解析失败文件剔除并在结果区尾部
+  渲染「解析失效」列表（详见规范 §6.9）；
 - 函数：`**sqrt** **cbrt** **root** **contains** **length** **lower** **upper** **empty**`
   （`**contains**` 区分大小写，忽略大小写用 `**contains**(**lower**(字段), '值')`）；
 - 排序：多级排序、`**SORT** 字段 **BY** ('值1', '值2')` 自定义优先级；

@@ -48,6 +48,8 @@ export interface DatashowSettings {
   showDebug: boolean;
   /** 数值列非整数显示的小数位（非负整数；超过浮点精度重置默认 4，仅显示层） */
   decimalPlaces: number;
+  /** [ext] 解析失效列表渲染上限（正整数，不设上限值；非法恢复默认 3） */
+  failedFileListLimit: number;
   /** 看板定义（用户内容，在设置中管理） */
   boards: BoardDef[];
   /** 侧栏已折叠的分类名（重启后保留折叠状态） */

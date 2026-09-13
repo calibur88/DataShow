@@ -1,0 +1,12 @@
+---
+status: 正常
+level: info
+priority: 2
+history: 已重试
+history: 已恢复
+steps:
+  - 连接
+  - 校验
+flags: [fast, safe]
+retry: 3
+---

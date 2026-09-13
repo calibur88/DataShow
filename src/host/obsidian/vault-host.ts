@@ -98,6 +98,23 @@ export class ObsidianVaultHost implements IVaultHost {
         }),
       );
     }
+    // vault 级 modify / create（含非 md）：仅 [ext] 查询刷新兜底使用，索引器不注册
+    if (handlers.onModified) {
+      refs.push(
+        this.app.vault.on("modify", (file) => {
+          invalidate();
+          handlers.onModified?.(file.path);
+        }),
+      );
+    }
+    if (handlers.onCreated) {
+      refs.push(
+        this.app.vault.on("create", (file) => {
+          invalidate();
+          handlers.onCreated?.(file.path);
+        }),
+      );
+    }
 
     return () => {
       for (const ref of refs) {

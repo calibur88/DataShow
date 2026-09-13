@@ -17,7 +17,8 @@ export type Expr =
   | CallExpr
   | UnaryExpr
   | BinaryExpr
-  | VariableExpr;
+  | VariableExpr
+  | ExtFilterExpr;
 
 export interface LitExpr {
   kind: "lit";
@@ -54,6 +55,17 @@ export interface VariableExpr {
   kind: "variable";
   /** 裸名（书写时 $平均分$ → name "平均分"） */
   name: string;
+}
+
+/**
+ * [ext] 后缀过滤原子（仅 **WHERE** 表达式合法）：
+ * - exts 为原样字符串（不归一化：不去点、不转大小写，匹配时严格相等）；
+ * - 空数组 = `[]`（读取范围 ALL 语义；行级求值恒 true）；
+ * - 文件级读取范围与按后缀分派见 core/index/ext-source 与执行器 collectExtFilters。
+ */
+export interface ExtFilterExpr {
+  kind: "extFilter";
+  exts: string[];
 }
 
 /* ---------- 数据源 ---------- */

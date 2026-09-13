@@ -3,7 +3,7 @@
  * @description 看板面板渲染：DSQL 编辑 + 查询执行 + 三视图结果区分派（纯 UI，只吃 PanelDeps）
  */
 
-import { executeQuery, type QueryDebug, type ResultSet } from "@dsql/executor";
+import { collectExtFilters, executeQuery, type QueryDebug, type ResultSet } from "@dsql/executor";
 import { parseQuery, QueryParseError } from "@dsql/parser";
 import {
   IMPLEMENTED_VIEWS,
@@ -13,6 +13,7 @@ import {
   type ViewType,
 } from "@dsql/types";
 import type { PanelDeps } from "@host/types";
+import { failedListForRender, loadExtRows } from "@index/ext-source";
 import { renderCardView } from "@render/card-view";
 import { renderListView } from "@render/list-view";
 import { renderTableView } from "@render/table-view";
@@ -25,6 +26,8 @@ export interface PanelController {
   mount(): Promise<void>;
   /** 整体重绘（看板切换或外部变更） */
   render(): Promise<void>;
+  /** 只重跑查询结果区（不动编辑器；[ext] 查询刷新兜底用） */
+  rerun(): void;
   /** 落盘防抖保存并退订全部订阅 */
   dispose(): void;
 }
@@ -58,6 +61,8 @@ export function createPanelController(
   let searchTerm = "";
   /** 当前结果区标签页（每次重跑回到「查询结果」） */
   let resultTab: "result" | "debug" = "result";
+  /** 结果区请求序号：[ext] 异步读取期间的竞态守卫（只渲染最新一次） */
+  let resultRun = 0;
 
   const currentBoard = (): BoardDef | undefined =>
     deps.settings().boards.find((b) => b.id === getBoardId());
@@ -171,7 +176,7 @@ export function createPanelController(
     toolbar.createDiv({ cls: "datashow-toolbar__spacer" });
     toolbar
       .createEl("button", { cls: "datashow-toolbar__btn", text: "刷新" })
-      .addEventListener("click", () => renderResult(false));
+      .addEventListener("click", () => { void renderResult(false); });
     toolbar.createSpan({ cls: "datashow-toolbar__label", text: "视图" });
     const select = toolbar.createEl("select", { cls: "datashow-toolbar__select" }) as HTMLSelectElement;
     // R6 下拉选项：跟随语句 / 表格 / 列表 / 卡片
@@ -190,7 +195,7 @@ export function createPanelController(
         // 跟随语句：仅清空 viewType，SQL 不动
         board.viewType = "";
         void deps.saveSettings();
-        renderResult();
+        void renderResult();
         return;
       }
       // 强制覆盖：用 applyViewType 同步 SQL 开头关键词与 viewType
@@ -198,13 +203,13 @@ export function createPanelController(
       // 同步回编辑器
       textarea.value = board.sql;
       void deps.saveSettings();
-      renderResult();
+      void renderResult();
     });
     viewSelect = select;
 
     // ---- 结果区（独立刷新） ----
     resultWrap = root.createDiv({ cls: "datashow-result" });
-    renderResult(false);
+    void renderResult(false);
   }
 
   /**
@@ -212,7 +217,7 @@ export function createPanelController(
    *
    * @param keepTab - true 时保留当前标签页状态；false 时强制切到「查询结果」
    */
-  function renderResult(keepTab: boolean = false): void {
+  async function renderResult(keepTab: boolean = false): Promise<void> {
     if (!resultWrap || !isVisible()) return;
     const board = currentBoard();
     if (!board) return;
@@ -221,6 +226,9 @@ export function createPanelController(
     if (!keepTab) {
       resultTab = "result";
     }
+
+    // 竞态守卫：[ext] 文件级读取为异步，期间的更新请求以最新一次为准
+    const runId = ++resultRun;
 
     const wrap = resultWrap;
     wrap.empty();
@@ -236,12 +244,24 @@ export function createPanelController(
     let query: ReturnType<typeof parseQuery> | null = null;
     let result: ResultSet | null = null;
     let error: string | null = null;
+    /** [ext] 文件级读取的失败文件（解析失效，渲染在结果区尾部） */
+    let failedFiles: string[] = [];
     try {
       query = parseQuery(sql);
+      // [ext] 文件级读取（WHERE 第一步）：没写 [ext] → 完全现状，零额外读取
+      const extState = collectExtFilters(query.where);
+      let extRows: DataRow[] = [];
+      if (extState !== null) {
+        const loaded = await loadExtRows(extState, query.from, deps.extSource);
+        if (runId !== resultRun) return;
+        extRows = loaded.rows;
+        failedFiles = loaded.failed;
+      }
       result = executeQuery(query, deps.rows.all(), null, {
         debug: deps.settings().showDebug,
         // DSQL 1.5：摄取期容错警告（如重复键剔除的文件）随调试信息输出
         ingestWarnings: deps.rows.ingestWarnings(),
+        extRows,
       });
     } catch (err) {
       error = err instanceof QueryParseError ? err.message : String((err as Error).message ?? err);
@@ -279,11 +299,13 @@ export function createPanelController(
       }
       if (result.rows.length === 0) {
         content.createDiv({ cls: "datashow-result__empty", text: "查询结果为空（0 行）。" });
-        return;
+      } else {
+        renderResultByView(content, view, query.withoutId, result);
+        // 仅卡片视图应用搜索过滤
+        if (view === "CARD_VIEW") applyFilter();
       }
-      renderResultByView(content, view, query.withoutId, result);
-      // 仅卡片视图应用搜索过滤
-      if (view === "CARD_VIEW") applyFilter();
+      // [ext] 解析失效文件渲染在结果区尾部（0 行时同样显示）
+      if (failedFiles.length > 0) renderFailedFiles(content, failedFiles);
     };
     btnResult.addEventListener("click", () => {
       resultTab = "result";
@@ -320,14 +342,14 @@ export function createPanelController(
   function applySearch(): void {
     if (!searchInput) return;
     searchTerm = searchInput.value;
-    renderResult();
+    void renderResult();
   }
 
   /** 清空搜索：清空输入框与搜索词，重跑结果区恢复全部卡片。 */
   function clearSearch(): void {
     searchTerm = "";
     if (searchInput) searchInput.value = "";
-    renderResult();
+    void renderResult();
   }
 
   /**
@@ -380,6 +402,17 @@ export function createPanelController(
     }
   }
 
+  /**
+   * 解析失效文件（[ext] 非 md 读取失败，warn / error 同桶）：YAML 值渲染在结果区尾部一行，
+   * 走 IYamlCodec.stringify；label 计数 = 渲染条数（截断后），路径已按 UTF-8 字节序排序。
+   */
+  function renderFailedFiles(wrap: HTMLElement, failed: string[]): void {
+    const { shown, count } = failedListForRender(failed, deps.settings().failedFileListLimit);
+    const div = wrap.createDiv({ cls: "datashow-result__failed" });
+    div.createSpan({ cls: "datashow-result__failed-label", text: `解析失效 ${count}` });
+    div.createSpan({ cls: "datashow-result__failed-list", text: deps.codec.stringify(shown).trim() });
+  }
+
   /** 调试信息（逐操作 + 字段缺失 + 警告 + 数据源统计 + 耗时） */
   function renderDebug(wrap: HTMLElement, dbg: QueryDebug): void {
     const entries: { op: string; message: string; warn?: boolean }[] = [
@@ -420,10 +453,13 @@ export function createPanelController(
   return {
     async mount(): Promise<void> {
       unsubBoards = deps.onBoardsChange(() => onExternalChange());
-      unsubStore = deps.rows.subscribe(() => renderResult(true));
+      unsubStore = deps.rows.subscribe(() => { void renderResult(true); });
       if (getBoardId()) await render();
     },
     render,
+    rerun(): void {
+      void renderResult(true);
+    },
     dispose(): void {
       flushSave();
       unsubBoards?.();

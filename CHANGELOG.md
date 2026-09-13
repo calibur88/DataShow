@@ -3,7 +3,51 @@
 > 版本按迭代顺序倒序排列，每个版本条目固定分为「插件更新」与「DSQL 更新」两类；
 > 编写规范见 [CONTRIBUTING.md](CONTRIBUTING.md) §6。
 
-## [2.1.4] - 2026-09-10（当前）
+## [DSQL 2.1] - 2026-09-14（当前；语言版本升级，插件仍为 2.1.4）
+
+### 插件更新
+
+**[ext] 非 md 数据源**：`[ext]` 触发的文件级读取，把 FROM 目录下的非 md 文件接入查询
+（md → 官方 metadataCache 路径不变；非 md → 自研解析；两条路径正交，失败文件剔除并渲染）。
+
+- 新增 `core/index/yaml-fallback.ts`：自研 YAML 子集解析器（零依赖、纯函数、Node 可单测），
+  围栏共享语义 + 挂起机制 + 计数器收集同名键；围栏数先校验（0 → error、奇数 → warn 整体作废、
+  空结果 → error）；只服务非 md 路径，与 md 官方解析互不干预；
+- 新增 `core/index/ext-source.ts`：文件级读取编排——读取范围 = FROM 目录集合（纯标签源零触发、
+  禁止全库扫描），按后缀分派 md / 非 md 两条正交路径，失败文件剔除并按 UTF-8 字节序排序计数；
+- 新增第八条宿主接口 `IExtSourceHost`（`host/types.ts` + `host/obsidian/ext-source-host.ts`，
+  查询级使用、无常驻状态）；`IVaultHost.subscribe` 新增 vault 级 modify / create 事件（含非 md）；
+- 面板：查询含 `[ext]` 时异步加载并带竞态守卫；解析失效文件以 YAML 值渲染在结果区尾部
+  「解析失效 N」（warn / error 同桶，截断到设置上限，label 计数与列表一致）；
+- 刷新兜底：vault 变更事件在 views 层接收，当前查询含 `[ext]` 时去抖 300ms 重跑（无 `[ext]` 不订阅重跑；
+  非 md 不缓存、不常驻、不监听、不进索引器，索引器零改动）；
+- 设置新增 `failedFileListLimit`（默认 3，只接受正整数，非法恢复默认），设置页同步；
+- `render/` 层保持零 `import "obsidian"`；`file.outlinks` / `file.inlinks` 对非 md 恒为空数组。
+
+### DSQL 更新
+
+**DSQL 语言升级 v2.1：`[ext]` 后缀过滤原子**（`**WHERE**` 表达式新原子，可 AND / OR / NOT 组合）：
+
+- 语法：`[txt]` / `[txt, mp4]` / `[]`；支持**并置简写**——`**WHERE** [txt] status %==% 'x'`
+  等价于 `[txt] **AND** status %==% 'x'`（语法定稿示例写法）；出现在 SELECT / SORT / FROM →
+  解析错误（带行列号）；`[` 未闭合 → 词法错误；
+- 后缀不做归一化：原样字符串与 `file.ext` 严格相等（`[.TXT]` / `[Txt]` / `[-]` 均按字面）；
+  无白名单，解析不了的文件按失败处理；
+- 三态收集（`collectExtFilters`）：没写 `[ext]` → null（零触发，行为与 v2.0 完全一致）；
+  出现 `[]` → ALL（读 FROM 目录下全部文件，与其它 `[ext]` 同现仍归 ALL）；其余 → 后缀并集；
+- 执行语义：WHERE 阶段两步——文件级（FROM 目录 ∩ 后缀 → 按后缀分派建行并入）先于行级；
+  行级求值用各节点自己的 exts（`[txt] AND [mp4]` 空结果、`[txt] OR status %==% 'x'` 的
+  OR 意图完整保留、`NOT [txt]` 只剩 md 行）；`**TOTAL**` 恒不统计非 md 行；
+- 方言差异备注：md 同名键剔除 + duplicateKey warning，非 md 同名键收集为数组（YAML 1.2.2
+  序列可含重复元素）；嵌套结构非 md 不可见（`键:` 无子行 → null）。
+
+- 测试：166 例（八套件：功能 22 / 数学 29 / DSQL语言 22 / store 4 / 摄取层 4 / ext后缀过滤 60 /
+  viewSync 15 / normalizeBoard 10）全部通过；`npm run build` 通过；
+  已在 test-vault-local 实机验收（九个 ext示例 看板按测试功能分类，Obsidian CLI + DOM 断言）。
+
+---
+
+## [2.1.4] - 2026-09-10
 
 ### 插件更新
 

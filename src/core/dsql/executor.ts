@@ -60,6 +60,12 @@ export interface ExecuteOptions {
   debug?: boolean;
   /** DSQL 1.5：摄取期容错警告（如重复键剔除），随调试信息一并输出 */
   ingestWarnings?: { type: string; message: string }[];
+  /**
+   * [ext] 文件级读取产出的行（md 官方路径 + 非 md 自研路径，按后缀分派）。
+   * 在聚合遍（TOTAL 恒基于 FROM 全量 md 命中行）之后、WHERE 行级过滤之前
+   * 按 path 去重并入候选行集；不传 = 查询无 [ext]，行为与现状完全一致。
+   */
+  extRows?: DataRow[];
 }
 
 /**
@@ -147,6 +153,17 @@ export function executeQuery(
       }
       globals.set(alias, value);
       aggMsgs.push(`${alias} = ${value === null ? "null" : value}`);
+    }
+  }
+
+  // ---- [ext] 文件级行并入（聚合遍之后 → TOTAL 不含非 md 行；WHERE 之前 → 行级过滤覆盖之） ----
+  if (opts.extRows && opts.extRows.length > 0) {
+    const seen = new Set(matched.map((row) => row.path));
+    for (const row of opts.extRows) {
+      if (!seen.has(row.path) && matchSource(q.from, row)) {
+        seen.add(row.path);
+        matched.push(row);
+      }
     }
   }
 
@@ -273,6 +290,11 @@ export function evaluateExpr(
       return expr.value;
     case "variable":
       return vars?.get(expr.name) ?? null;
+    case "extFilter":
+      // 行级判断（禁止恒 true 的并集偷懒）：exts 为空（[]）→ 恒 true；
+      // 否则按该节点自己的 exts 严格相等匹配（原样字符串，无归一化）。
+      // [txt] AND [mp4] 由此得空结果；[txt] OR status %==% 'x' 的 OR 意图由此保留。
+      return expr.exts.length === 0 || expr.exts.includes(row.file.ext);
     case "field": {
       const v = resolveField(row, expr.path, ctx);
       return track ? track(row, expr.path, v) : v;
@@ -449,6 +471,88 @@ export function compareUtf8(a: string, b: string): number {
     if (ba[i] !== bb[i]) return ba[i] - bb[i];
   }
   return ba.length - bb.length;
+}
+
+/* ---------- [ext] 后缀过滤（文件级收集 / 目录范围） ---------- */
+
+/**
+ * [ext] 读取范围哨兵：WHERE 中至少出现一个 `[]` → 读 FROM 目录下全部文件。
+ * 三态严格区分：null（没写 [ext]，零触发）≠ EXT_ALL（[]，全量）≠ Set（指定后缀并集）。
+ */
+export const EXT_ALL = Symbol("DSQL:extAll");
+
+export type ExtFilterState = null | typeof EXT_ALL | Set<string>;
+
+/**
+ * 遍历 WHERE AST 收集所有 ExtFilterNode 的读取范围（规范 §4.2）：
+ * - 没写任何 [ext] → null（不触发文件级分派，只用行仓库 md 行）；
+ * - 至少一个 []   → EXT_ALL（读 FROM 目录下全部文件；与 [txt] 同现时归 ALL）；
+ * - 其余          → Set（所有 [ext] 内容的并集，仅用于读取范围；
+ *                    行级求值仍用各节点自己的 exts，见 evaluateExpr）。
+ */
+export function collectExtFilters(where: Expr | null): ExtFilterState {
+  if (!where) return null;
+  let state: ExtFilterState = null;
+  const visit = (expr: Expr): void => {
+    switch (expr.kind) {
+      case "extFilter":
+        if (expr.exts.length === 0) {
+          state = EXT_ALL;
+          return;
+        }
+        if (state === EXT_ALL) return; // ALL 优先级最高，不降级为并集
+        if (!(state instanceof Set)) state = new Set<string>();
+        for (const ext of expr.exts) (state as Set<string>).add(ext);
+        return;
+      case "binary":
+        visit(expr.left);
+        visit(expr.right);
+        return;
+      case "unary":
+        visit(expr.expr);
+        return;
+      case "call":
+        for (const arg of expr.args) visit(arg);
+        return;
+      default:
+        return;
+    }
+  };
+  visit(where);
+  return state;
+}
+
+/**
+ * 收集 FROM 中全部叶子目录路径（含子目录语义由 listFiles 实现侧保证）；
+ * 标签叶子不参与（标签源不触发文件级非 md 读取）。无任何目录叶子时返回空数组。
+ * AND / OR 的目录组合语义不在本函数展开——文件级过滤统一用 matchFolder。
+ */
+export function collectSourceFolders(source: Source): string[] {
+  switch (source.kind) {
+    case "folder":
+      return [source.path];
+    case "tag":
+      return [];
+    case "op":
+      return [...collectSourceFolders(source.left), ...collectSourceFolders(source.right)];
+  }
+}
+
+/** FROM 目录语义在文件级（folder）的判定：与 matchSource 的 folder 分支一致；标签叶子视为无约束。 */
+export function matchFolder(source: Source, folder: string): boolean {
+  switch (source.kind) {
+    case "folder": {
+      const p = source.path.toLowerCase();
+      const f = folder.toLowerCase();
+      return f === p || f.startsWith(`${p}/`) || p === "";
+    }
+    case "tag":
+      return true;
+    case "op":
+      return source.op === "and"
+        ? matchFolder(source.left, folder) && matchFolder(source.right, folder)
+        : matchFolder(source.left, folder) || matchFolder(source.right, folder);
+  }
 }
 
 /* ---------- FROM ---------- */

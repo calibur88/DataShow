@@ -1,8 +1,9 @@
 # DSQL 语言规范
 
 > **DSQL**（DataShow Query Language）—— Obsidian 元数据查询方言。
-> **DSQL 语言版本**：`2.0`（视图关键词统一 `*_VIEW` 后缀，新增 `CARD_VIEW`，废除旧 `TABLE` / `LIST`）
-> **文档版本**：`2.1.0`（随插件 2.1.0 发布；语言版本与插件版本各自独立）
+> **DSQL 语言版本**：`2.1`（v2.1 新增 `[ext]` 后缀过滤原子与非 md 数据源，见 §6.9；
+> v2.0 视图关键词统一 `*_VIEW` 后缀，新增 `CARD_VIEW`，废除旧 `TABLE` / `LIST`）
+> **文档版本**：`2.2.0`（语言版本与插件版本各自独立）
 >
 > 本文档为权威依据：语法 EBNF + 语义逐条定义，语言变更需同步本文与 `tests/` 用例。
 
@@ -54,6 +55,7 @@ NULL       = "null" ;
 COMMENT    = "--" , { any } , newline ;
 STAR       = "*" ;          (* 仅 **SELECT** * 全字段；** 只作为标记起始 *)
 PUNCT      = "(" | ")" | "," | "#" ;
+EXT_FILTER = "[" , [ ext , { "," , ext } ] , "]" ;  (* [ext] 后缀过滤，ext 不含 "]" 与 ","，原样保留 *)
 ```
 
 ---
@@ -101,8 +103,11 @@ add_expr       = mul_expr , { ( %+% | %-% ) , mul_expr } ;
 mul_expr       = pow_expr , { ( %*% | %/% | %%% ) , pow_expr } ;
 pow_expr       = unary_expr , { %^% , unary_expr } ;       (* 右结合 *)
 unary_expr     = ( %+% | %-% ) , unary_expr | primary ;
-primary        = literal | function_call | ident | variable | "(" , expr , ")" ;
+primary        = literal | function_call | ident | variable | ext_filter
+               | "(" , expr , ")" ;
 variable       = "$" , ident , "$" ;                       (* 仅 SELECT 内可引用 *)
+ext_filter     = EXT_FILTER ;                              (* 仅 WHERE 表达式内合法；
+                                                              出现在 SELECT / SORT / FROM → 解析错误（带行列号） *)
 
 literal        = STRING | PATH | NUMBER | BOOLEAN | NULL ;
 function_call  = **函数名** , "(" , [ expr , { "," , expr } ] , ")" ;
@@ -113,6 +118,9 @@ function_call  = **函数名** , "(" , [ expr , { "," , expr } ] , ")" ;
 - `comparison` 允许无比较符的裸操作数：此时 `concat_expr` 按**真值判断**（§6.3「真值」行：
   empty 值 / null / 0 / false / 空串 / 空数组 → 假，其余 → 真），否则 `**WHERE** **contains**(...)`
   这类写法无法成立；
+- `[ext]` 支持**并置简写**：`**WHERE** [txt] status %==% 'x'` 等价于
+  `**WHERE** [txt] **AND** status %==% 'x'`（`[ext]` 原子后紧跟表达式即隐式 AND，
+  见 §6.9）；显式 `**AND**` 写法始终可用；
 - `**WITHOUT** **ID**` 可写在任意子句位置；
 - 省略 `**SELECT**` 时投影为 `*`（自动列 = 结果行字段并集，按 **UTF-8 字节序**排列）；
 - PATH 在表达式内等价字符串字面量；
@@ -340,6 +348,51 @@ function_call  = **函数名** , "(" , [ expr , { "," , expr } ] , ")" ;
 - 词法层拦截：未知 `**WORD**`、未包裹的关键词 / 运算符、字符串未闭合、非法数字（`1.` / `.5`）；
 - 运行期非致命：类型不匹配、除零、未知函数、字段缺失 → null 或过滤掉，并计入 warnings；
 - 摄取期容错（重复键等）见 §6.1。
+
+### 6.9 [ext] 后缀过滤（非 md 数据源）
+
+`**WHERE**` 表达式中的原子 `[ext]`（可 `**AND**` / `**OR**` / `**NOT**` 组合）把 FROM 目录下的
+非 md 文件接入查询。后缀**不做归一化**：写什么匹配什么（`[.TXT]` / `[Txt]` / `[-]` 均按字面
+处理），与 `file.ext` 严格相等；无白名单，解析不了按失败处理。
+
+```sql
+**TABLE_VIEW** **SELECT** status **AS** 状态, message **AS** 信息
+**FROM** "示例/logs"
+**WHERE** [txt, mp4] status %!=% 'error'
+**SORT** priority **ASC**
+```
+
+**执行语义（WHERE 阶段分两步，顺序不可调换）**：
+
+1. **文件级**：抽 `[ext]` → 从 **FROM** 目录集合筛文件 → 按后缀分派解析器 → 建行并入行集。
+   分派规则：`md` → 官方路径（metadataCache frontmatter，无回退）；非 md → 自研路径
+   （cachedRead + 自研 YAML 子集解析，失败剔除并在结果区尾部渲染「解析失效」列表，
+   上限见设置 `failedFileListLimit`）。两条路径正交，同一文件只走一条。
+2. **行级**：其余 WHERE 条件（含 `[ext]` 自身）在合并行集上求值。`[ext]` 按行判断——
+   行的 `file.ext` 属于该节点自己的后缀列表（`[]` 恒真），因此 `[txt] **OR** status %==% 'x'`
+   的 OR 意图完整保留，`[txt] **AND** [mp4]` 得空结果。
+
+**读取范围 = FROM 命中的目录集合**（禁止全库扫描）；`**FROM** #标签` 不触发非 md 读取，
+只对现有 md 行做行级过滤。三态收集：没写 `[ext]` → 零触发（现状）；出现 `[]` → 读目录下
+全部文件（与其它 `[ext]` 同现时仍归全部）；其余 → 各 `[ext]` 后缀的并集。
+
+**语义对照**：
+
+| 写法 | 结果 |
+|---|---|
+| `[txt]` | 只剩 txt 行（全部来自本次读取） |
+| `[md]` | 只剩 md 行（md 交官方路径） |
+| `[txt] **AND** status %==% 'x'` | txt 行里 status='x' 的 |
+| `[txt] **OR** status %==% 'x'` | 全部 txt 行 + 满足 status 的 md 行 |
+| `**NOT** [txt]` | 只剩 md 行（txt 文件仍会被读入再滤掉） |
+| `[]` | FROM 目录下所有文件（md + 非 md） |
+| 不写 `[...]` | 完全现状 |
+
+**已知方言差异**（两条路径正交，同写法允许不同结果）：md 同名键 → 文件剔除 + duplicateKey
+warning，非 md → 收集为数组；`yes` / 日期等官方类型推断在非 md 为自研方言（裸字符串等）；
+嵌套结构非 md 不可见（`键:` 无子行产出 null）。**TOTAL** 恒基于 FROM 全量 md 命中行，
+不包含由 `[ext]` 触发读取的非 md 行。非 md 文件变更由查询级刷新兜底（vault 事件去抖 300ms
+重跑），不建立常驻监听、不进索引器；`file.outlinks` / `file.inlinks` 对非 md 恒为空数组。
 
 ---
 

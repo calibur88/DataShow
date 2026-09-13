@@ -274,6 +274,78 @@
       "description": "CARD_VIEW：按「类型」分列的场景卡，卡片内可直接改 frontmatter",
       "sql": "**CARD_VIEW** **SELECT**\n  类型,\n  file.name **AS** 场景,\n  地点,\n  季节,\n  场景人物\n**FROM** \"示例/场景示例\"\n**SORT** 地点 **ASC**",
       "viewType": "CARD_VIEW"
+    },
+    {
+      "id": "e1-ext-juxtaposed",
+      "name": "语法·并置简写",
+      "type": "ext示例",
+      "description": "[txt, log] 后紧跟条件 ≡ 隐式 AND（规范定稿示例）。预期：app.txt、sub/网关.log 两行（db.txt 被 status 过滤，md 被后缀排除），尾部解析失效 3",
+      "sql": "**TABLE_VIEW** **SELECT**\n  status **AS** 状态,\n  level **AS** 级别,\n  file.ext **AS** 后缀\n**FROM** \"示例/日志示例\"\n**WHERE** [txt, log] status %!=% 'error'\n**SORT** priority **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "e2-ext-bool-combo",
+      "name": "语法·AND/OR/NOT 组合",
+      "type": "ext示例",
+      "description": "[ext] 可与 AND / OR / NOT 组合。预期：仅 app.txt（txt 且 level=info；db.txt level=warn 被过滤，网关.log 非 txt 被排除）",
+      "sql": "**SELECT** file.name **AS** 文件, level **AS** 级别, file.ext **AS** 后缀\n**FROM** \"示例/日志示例\"\n**WHERE** [txt] **AND** level %==% 'info'",
+      "viewType": ""
+    },
+    {
+      "id": "e3-ext-all",
+      "name": "三态·[] 全量读取",
+      "type": "ext示例",
+      "description": "[] 读 FROM 目录下全部文件（md + 非 md，含子目录），按后缀分派。预期：4 行 + 解析失效 3（三个损坏文件剔除）",
+      "sql": "**SELECT** file.name **AS** 文件, status **AS** 状态, file.ext **AS** 后缀\n**FROM** \"示例/日志示例\"\n**WHERE** []\n**SORT** file.ext **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "e4-ext-md-official",
+      "name": "分派·[md] 官方路径",
+      "type": "ext示例",
+      "description": "[md] 单独使用：md 交官方路径（metadataCache）。预期：仅 服务日志.md 一行，tags 数组可查询",
+      "sql": "**SELECT** file.name **AS** 文件, status **AS** 状态, tags **AS** 标签\n**FROM** \"示例/日志示例\"\n**WHERE** [md]",
+      "viewType": ""
+    },
+    {
+      "id": "e5-ext-two-paths",
+      "name": "分派·[txt, md] 两路并入",
+      "type": "ext示例",
+      "description": "[txt, md]：txt 交自研解析、md 交官方路径，两路行按 path 去重并入。预期：4 行按 priority 排序",
+      "sql": "**SELECT** file.name **AS** 文件, status **AS** 状态, file.ext **AS** 后缀\n**FROM** \"示例/日志示例\"\n**WHERE** [txt, md]\n**SORT** priority **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "e6-ext-or-not",
+      "name": "求值·OR 意图保留与 NOT",
+      "type": "ext示例",
+      "description": "上：[txt] OR status=正常 → 全部 txt 行 + 满足 status 的 md 行（3 行；网关.log 未被 [txt] 触发读取，不出行属预期）。对照下句：[] AND NOT [txt] → 非 txt 行（md + log，2 行）",
+      "sql": "**SELECT** file.name **AS** 文件, status **AS** 状态, file.ext **AS** 后缀\n**FROM** \"示例/日志示例\"\n**WHERE** [txt] **OR** status %==% '正常'\n\n-- 对照：全部文件中非 txt 的行\n-- **WHERE** [] **AND** **NOT** [txt]",
+      "viewType": ""
+    },
+    {
+      "id": "e7-ext-tag-scope",
+      "name": "范围·标签源不触发非 md 读取",
+      "type": "ext示例",
+      "description": "FROM #标签 不触发文件级非 md 读取，只对现有 md 行做行级过滤。预期：0 行（md 行不满足 [txt]，txt 未被读取）",
+      "sql": "**SELECT** file.name **AS** 文件, status **AS** 状态\n**FROM** #log\n**WHERE** [txt]",
+      "viewType": ""
+    },
+    {
+      "id": "e8-ext-total",
+      "name": "TOTAL·不含非 md 行",
+      "type": "ext示例",
+      "description": "TOTAL 恒基于 FROM 全量 md 命中行。预期：优先级合计 = 1（仅 md；app.txt=2、db.txt=3 不计入），单行汇总",
+      "sql": "**SELECT** **TOTAL** priority **AS** $优先级合计$\n**FROM** \"示例/日志示例\"\n**WHERE** [txt]",
+      "viewType": ""
+    },
+    {
+      "id": "e9-ext-dialect",
+      "name": "方言·自研 YAML 解析特性",
+      "type": "ext示例",
+      "description": "非 md 自研方言：history 同键收集为数组、steps 块式列表、flags 流式数组、retry 数字推断。预期：app.txt 一行五列齐全（md 行这些字段缺失显示 —）",
+      "sql": "**SELECT** file.name **AS** 文件,\n  history **AS** 同键收集,\n  steps **AS** 块式列表,\n  flags **AS** 流式数组,\n  retry **AS** 数字推断\n**FROM** \"示例/日志示例\"\n**WHERE** [txt] **AND** status %==% '正常'",
+      "viewType": ""
     }
   ]
 }

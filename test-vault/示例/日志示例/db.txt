@@ -1,0 +1,6 @@
+---
+status: error
+level: warn
+priority: 3
+history: 已告警
+---

@@ -8,6 +8,7 @@
 
 import { Plugin, type WorkspaceLeaf } from "obsidian";
 import { VaultIndexer } from "@controller/indexer";
+import { ObsidianExtSourceHost } from "@host/obsidian/ext-source-host";
 import { ObsidianFrontmatterHost } from "@host/obsidian/frontmatter-host";
 import { ObsidianFrontmatterEditor } from "@host/obsidian/frontmatter-modal";
 import { ObsidianOpener } from "@host/obsidian/opener";
@@ -47,6 +48,7 @@ export default class DatashowPlugin extends Plugin {
     const codec = new ObsidianYamlCodec();
     const frontmatter = new ObsidianFrontmatterHost(this.app);
     const editor = new ObsidianFrontmatterEditor(this.app, codec);
+    const extSource = new ObsidianExtSourceHost(this.app);
 
     // ---- 索引器：宿主事件 → 行仓库；UI 只订阅行仓库，不直连宿主 ----
     const indexer = new VaultIndexer(vaultHost, this.store, this.ui);
@@ -77,6 +79,17 @@ export default class DatashowPlugin extends Plugin {
           settings: () => this.settings,
           saveSettings: () => this.saveSettings(),
           onBoardsChange: (cb) => this.addBoardListener(cb),
+          // [ext] 查询刷新兜底：vault 级 modify / create / delete / rename（含非 md），
+          // 是否响应由视图壳决定（无 [ext] 的查询不重跑）
+          onVaultChange: (cb) =>
+            vaultHost.subscribe({
+              onModified: cb,
+              onCreated: cb,
+              onDeleted: cb,
+              onRenamed: cb,
+            }),
+          extSource,
+          codec,
           opener,
           frontmatter,
           editor,

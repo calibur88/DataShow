@@ -61,7 +61,7 @@
 ```bash
 npm install
 npm run dev     # watch 模式，产物自动同步到两个测试库
-npm test        # 单测七套件全绿
+npm test        # 单测八套件全绿
 npm run build   # 类型检查 + 生产构建
 ```
 
@@ -243,7 +243,7 @@ card.style.display = 'none';
 
 - 测试套件位于 `tests/`，新套件必须**手动注册到 `tests/all.ts`**
   （项目用自定义 `scripts/test.mjs` + 显式 import，非 vitest / jest 自动扫描）；
-- 套件按领域组织：功能示例 / 数学示例 / DSQL 语言 / store / 摄取层 / viewSync / normalizeBoard；
+- 套件按领域组织：功能示例 / 数学示例 / DSQL 语言 / store / 摄取层 / ext后缀过滤 / viewSync / normalizeBoard；
 - 语法 / 语义变更必须同步新增或修改 `dsql-language.test.ts` 用例（含错误路径与边界）；
 - 提交前 `npm test` 全绿；测试例数变化（如「80 → 106」）同步到 README 与 ARCHITECTURE。
 

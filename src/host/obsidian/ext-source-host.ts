@@ -1,0 +1,58 @@
+/**
+ * @module host/obsidian/ext-source-host
+ * @description Obsidian [ext] 文件级读取适配器：vault 全文件列表 + metadataCache frontmatter + cachedRead
+ *
+ * 查询级使用：仅在当前查询含 [ext] 时被调用；不缓存、不订阅事件、不进索引器。
+ */
+
+import { App, TFile } from "obsidian";
+import type { IExtSourceHost, IFileMeta } from "../types";
+
+/** TFile → 宿主中立的文件元数据（与 vault-host 的 toMeta 同构） */
+function toMeta(file: TFile): IFileMeta {
+  const folder = file.parent?.path ?? "";
+  return {
+    path: file.path,
+    basename: file.basename,
+    folder: folder === "/" ? "" : folder,
+    ext: file.extension,
+    size: file.stat.size,
+    ctime: file.stat.ctime,
+    mtime: file.stat.mtime,
+  };
+}
+
+export class ObsidianExtSourceHost implements IExtSourceHost {
+  constructor(private app: App) {}
+
+  /**
+   * 列出目录集合（含子目录）下的全部文件（md + 非 md），不做后缀过滤。
+   * 目录匹配语义与执行器 matchFolder 的 folder 分支一致（根目录 "" = 全库范围，即 FROM 本身）。
+   */
+  async listFiles(folderPaths: string[]): Promise<IFileMeta[]> {
+    if (folderPaths.length === 0) return [];
+    const wanted = folderPaths.map((p) => p.toLowerCase());
+    return this.app.vault
+      .getFiles()
+      .filter((file) => {
+        const folderRaw = file.parent?.path ?? "";
+        const folder = (folderRaw === "/" ? "" : folderRaw).toLowerCase();
+        return wanted.some((p) => p === "" || folder === p || folder.startsWith(`${p}/`));
+      })
+      .map(toMeta);
+  }
+
+  /** md 官方路径：metadataCache 的 frontmatter（无则 null），无任何兜底 */
+  async readMd(path: string): Promise<Record<string, unknown> | null> {
+    const file = this.app.vault.getFileByPath(path);
+    if (!file) return null;
+    return this.app.metadataCache.getFileCache(file)?.frontmatter ?? null;
+  }
+
+  /** 非 md 自研路径前置：cachedRead 原文；文件不存在（race）返回 null */
+  async readNonMdText(path: string): Promise<string | null> {
+    const file = this.app.vault.getFileByPath(path);
+    if (!file) return null;
+    return this.app.vault.cachedRead(file);
+  }
+}
