@@ -324,6 +324,17 @@ test("[比较] 非原始值守卫在一切隐式转换之前（[5] %==% \"5\" �
   assert.equal(evalOn("arr %==% null", { arr: [5] }).value, false); // 非原始值非 null
 });
 
+test("[排序比较] > 口径同 §6.3：数字串按数值（'10' %>% 2 由旧口径 false 变 true），混合 → false", () => {
+  assert.equal(evalOn("'3' %>% 2").value, true);
+  assert.equal(evalOn("'10' %>% 2").value, true); // 数值 10 > 2（旧字节比 "1" < "2" → false）
+  assert.equal(evalOn("'2' %>% 10").value, false);
+  assert.equal(evalOn("'abc' %>% 2").value, false); // 一边能转一边不能
+  assert.equal(evalOn("'abc' %>% 'abd'").value, false); // 都转不出 → 字符串比
+  assert.equal(evalOn("'abc' %>% 'aba'").value, true);
+  assert.equal(evalOn("null %>% 2").value, false);
+  assert.equal(evalOn("arr %>% 2", { arr: [5] }).value, false);
+});
+
 /* ---------- 13.9 排序 ---------- */
 
 test("[排序] SORT 字段 %+% 0：数值序，null 排末尾；非原始值同 empty 排末尾", () => {

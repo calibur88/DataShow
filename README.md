@@ -10,7 +10,7 @@
 - **插件版本**：`2.1.4`
 - **插件 ID**：`data-show`（唯一 ID，插件目录与 `manifest.json` 一致）
 - **最低 Obsidian 版本**：`1.4.4`
-- **DSQL 语言版本**：`2.2`（v2.2 新增 `**SEARCH**` 正文抽取子句；v2.1 新增 `[ext]` 后缀过滤；
+- **DSQL 语言版本**：`2.3`（v2.3 新增 `**COUNT**` 分类计数子句与槽位模型；v2.2 新增 `**SEARCH**` 正文抽取；
   语言版本与插件版本各自独立，规范见 [docs/DSQL-语言规范.md](docs/DSQL-语言规范.md)）
 
 > **版本兼容性**：
@@ -31,7 +31,7 @@ DataShow/
 ├── esbuild.config.mjs   构建 + 自动同步到两个测试库
 ├── styles.css           样式
 ├── src/                 插件源码（见下）
-├── tests/               单元测试（九套件，零 Obsidian 依赖）
+├── tests/               单元测试（十套件，零 Obsidian 依赖）
 ├── scripts/test.mjs     测试运行器（esbuild 打包后交给 node）
 ├── docs/                DSQL 语言规范
 ├── dist/                构建产物（不入库）
@@ -68,7 +68,7 @@ src/
 npm install
 npm run build   # tsc 类型检查 + 产出 dist/main.js，并自动同步到两个测试库
 npm run dev     # watch 模式：src / manifest.json / styles.css 变化即重建并同步
-npm test        # 单测九套件，共 204 例
+npm test        # 单测十套件，共 229 例
 ```
 
 构建产物（`main.js` / `manifest.json` / `styles.css`）由 `esbuild.config.mjs` 自动同步到
@@ -113,6 +113,8 @@ npm test        # 单测九套件，共 204 例
   渲染「解析失效」列表（详见规范 §6.9）；
 - 正文抽取：`**SEARCH** '正则' **AS** 别名` 从每行 body 用正则抽字段，与 frontmatter 字段平级，
   WHERE / SORT / SELECT 全部可用（详见规范 §6.10）；
+- 分类计数：`**COUNT** 比较语句 **AS** $槽位$` 在 WHERE 过滤后行集上计数（无 WHERE = 全量），
+  填充 SELECT 声明的 `$槽位$`；`**TOTAL**` 恒为 FROM 全量口径，两口径可对照组合（详见规范 §6.11）；
 - 函数：`**sqrt** **cbrt** **root** **contains** **length** **lower** **upper** **empty**`
   （`**contains**` 区分大小写，忽略大小写用 `**contains**(**lower**(字段), '值')`）；
 - 排序：多级排序、`**SORT** 字段 **BY** ('值1', '值2')` 自定义优先级；

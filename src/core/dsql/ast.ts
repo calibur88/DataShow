@@ -94,8 +94,10 @@ export interface OpSource {
 export interface ColumnSel {
   expr: Expr;
   alias: string | null;
-  /** DSQL 1.4：**TOTAL** 全表聚合项（alias 强制，值进入变量表） */
+  /** DSQL 1.4：**TOTAL** 全表聚合项（alias 强制，值进入变量表）；DSQL 2.3 起仅填充槽位、自身不投影 */
   total?: true;
+  /** DSQL 2.3：裸 $x$ 槽位声明项（expr 为 variable 且无别名）；由 TOTAL / COUNT 填充，未填充静默忽略 */
+  slot?: true;
 }
 
 export interface SortKey {
@@ -121,10 +123,25 @@ export interface Query {
   from: Source;
   /** v2.1：[ext] 后缀过滤（WHERE 原子，见 ExtFilterExpr） */
   where: Expr | null;
-  /** DSQL 2.2：SEARCH 正文抽取子句（前件 FROM；执行在 WHERE 之前） */
+  /** DSQL 2.2：SEARCH 正文抽取子句（前件 FROM；执行在聚合遍之前） */
   search: SearchItemNode[] | null;
+  /** DSQL 2.3：COUNT 分类计数子句（前件 FROM；执行在 WHERE 之后、SORT 之前） */
+  count: CountItemNode[] | null;
   sort: SortClause | null;
   limit: number | null;
+}
+
+/**
+ * DSQL 2.3 COUNT 计数项：显式比较语句在 WHERE 过滤后行集上求真计数（标量），
+ * 填充 SELECT 声明的 $槽位$。line / col 是槽位的 token 位置（parse 期冲突错误用）。
+ */
+export interface CountItemNode {
+  /** 显式比较（cmp_op 二元节点；裸操作数 parse 期致命） */
+  cmp: BinaryExpr;
+  /** 目标槽位名（裸名） */
+  slot: string;
+  line: number;
+  col: number;
 }
 
 /**

@@ -465,6 +465,18 @@ test("[TOTAL] 含 [ext] 的查询中 TOTAL 统计 [ext] 全量行（聚合遍在
   assert.equal(r.globals?.get("总"), 3); // md 行 n=1 + [ext] 并入的 b.txt n=2
 });
 
+test("[TOTAL] TOTAL 是冻结的全局量：每行投影看到同一值，不存在逐行累计状态", async () => {
+  const { evaluateExpr } = await import("@dsql/executor");
+  const r = await run('**SELECT** **TOTAL** 1 **AS** $总$, $总$ **AS** 分母, n **FROM** "logs" **WHERE** [txt, md]');
+  assert.equal(r.globals?.get("总"), 3); // FROM 全量：md a.md/e.md + [ext] b.txt
+  assert.equal(r.rows.length, 3);
+  const 分母列 = r.columns.find((c) => c.alias === "分母")!;
+  for (const row of r.rows) {
+    // 每一行（md 或 [ext] txt）查到的 TOTAL 都相同——聚合遍冻结，非逐行累计
+    assert.equal(evaluateExpr(分母列.expr, row, null, undefined, undefined, r.globals ?? undefined), 3);
+  }
+});
+
 test("[race] 文件在 listFiles 后消失 → 剔除并计数，不静默", async () => {
   const { loaded } = await run('**FROM** "logs" **WHERE** [txt, mp4]');
   assert.ok(loaded.failed.includes("logs/g.txt"));

@@ -46,6 +46,8 @@ export interface QueryDebug {
   aggregates: string[];
   /** DSQL 2.2：SEARCH 各模板命中统计（按 SEARCH 顺序） */
   search: SearchStat[];
+  /** DSQL 2.3：各 COUNT 计数项结果（调试页 COUNT 行） */
+  count: string[];
   executionTimeMs: number;
 }
 
@@ -65,7 +67,7 @@ export interface ResultSet {
   /** 实际使用的列（SELECT * 已展开为字段并集） */
   columns: { alias: string; expr: Expr; total?: true }[];
   rows: DataRow[];
-  /** DSQL 1.4：全局变量表（**TOTAL** 聚合结果，裸名键）；无聚合项时为 null */
+  /** DSQL 1.4：全局变量表（**TOTAL** 聚合 + DSQL 2.3 **COUNT** 计数填充的槽位，裸名键）；无聚合 / 计数项时为 null */
   globals: Map<string, FieldValue> | null;
   debug?: QueryDebug;
 }
@@ -145,53 +147,7 @@ export function executeQuery(
   const fromMsg = `输入 ${rows.length} 行 → 命中 ${matched.length} 行` +
     (enabled && extMerged > 0 ? `（含 [ext] 并入 ${extMerged} 行）` : "");
 
-  // ---- 别名唯一性行字段冲突校验（DSQL 1.5：聚合遍开始前，不限是否含 TOTAL 项） ----
-  // 判定范围 = FROM 全量命中行的字段名并集，任一行出现过该字段名即冲突 → 致命错误
-  const aliasedItems = q.select === "*" ? [] : q.select.filter((c) => c.alias);
-  if (aliasedItems.length > 0) {
-    const fieldNames = new Set<string>();
-    for (const row of matched) for (const k of Object.keys(row.fields)) fieldNames.add(k);
-    for (const item of aliasedItems) {
-      if (fieldNames.has(item.alias!)) {
-        throw new Error(`[DSQL] 别名 '$${item.alias}$' 与现有字段名冲突，请改用其他别名`);
-      }
-    }
-  }
-
-  // ---- 聚合遍（DSQL 1.4：恒忽略 WHERE，扫描 FROM 全量命中行） ----
-  const totalItems = q.select === "*" ? [] : q.select.filter((c) => c.total);
-  let globals: Map<string, FieldValue> | null = null;
-  const aggMsgs: string[] = [];
-  if (totalItems.length > 0) {
-    globals = new Map();
-    for (const item of totalItems) {
-      const alias = item.alias!;
-      let value = null;
-      if (matched.length === 0) {
-        warn?.("**TOTAL** 空表（FROM 命中 0 行），返回 null", "TOTAL");
-      } else if (item.expr.kind === "lit" && typeof item.expr.value === "number") {
-        value = item.expr.value * matched.length; // TOTAL 1 → 总行数；TOTAL 0 → 0
-      } else {
-        let sum = null;
-        let skipped = 0;
-        for (const row of matched) {
-          const v = evaluateExpr(item.expr, row, ctx, track, warn);
-          if (typeof v === "number") sum = (sum ?? 0) + v;
-          else if (v != null) skipped++;
-        }
-        if (sum == null) {
-          warn?.(`**TOTAL** ${item.alias} 无数值可累加（字段缺失或全为非数值），返回 null`, "TOTAL");
-        } else {
-          value = sum;
-          if (skipped > 0) warn?.(`**TOTAL** ${item.alias} 跳过 ${skipped} 个非数值行`, "TOTAL");
-        }
-      }
-      globals.set(alias, value);
-      aggMsgs.push(`${alias} = ${value === null ? "null" : value}`);
-    }
-  }
-
-  // ---- SEARCH（DSQL 2.2：正文抽取，在 WHERE 之前——字段先抽出来 WHERE / SORT 才能用） ----
+  // ---- SEARCH（DSQL 2.2：正文抽取，在聚合遍之前——TOTAL 可聚合数值抽取字段，WHERE / SORT 才能用） ----
   const searchStats: SearchStat[] | null =
     q.search && q.search.length > 0
       ? q.search.map((item) => ({ alias: item.alias, pattern: item.pattern, hits: 0, misses: 0, samples: [] }))
@@ -237,6 +193,52 @@ export function executeQuery(
     }
   }
 
+  // ---- 别名唯一性行字段冲突校验（DSQL 1.5：聚合遍开始前；裸槽位仅填充不投影，不参与判定） ----
+  // 判定范围 = FROM 全量命中行的字段名并集，任一行出现过该字段名即冲突 → 致命错误
+  const aliasedItems = q.select === "*" ? [] : q.select.filter((c) => c.alias && !c.slot);
+  if (aliasedItems.length > 0) {
+    const fieldNames = new Set<string>();
+    for (const row of matched) for (const k of Object.keys(row.fields)) fieldNames.add(k);
+    for (const item of aliasedItems) {
+      if (fieldNames.has(item.alias!)) {
+        throw new Error(`[DSQL] 别名 '$${item.alias}$' 与现有字段名冲突，请改用其他别名`);
+      }
+    }
+  }
+
+  // ---- 聚合遍（DSQL 1.4：恒忽略 WHERE，扫描 FROM 全量命中行） ----
+  const totalItems = q.select === "*" ? [] : q.select.filter((c) => c.total);
+  let globals: Map<string, FieldValue> | null = null;
+  const aggMsgs: string[] = [];
+  if (totalItems.length > 0) {
+    globals = new Map();
+    for (const item of totalItems) {
+      const alias = item.alias!;
+      let value = null;
+      if (matched.length === 0) {
+        warn?.("**TOTAL** 空表（FROM 命中 0 行），返回 null", "TOTAL");
+      } else if (item.expr.kind === "lit" && typeof item.expr.value === "number") {
+        value = item.expr.value * matched.length; // TOTAL 1 → 总行数；TOTAL 0 → 0
+      } else {
+        let sum = null;
+        let skipped = 0;
+        for (const row of matched) {
+          const v = evaluateExpr(item.expr, row, ctx, track, warn);
+          if (typeof v === "number") sum = (sum ?? 0) + v;
+          else if (v != null) skipped++;
+        }
+        if (sum == null) {
+          warn?.(`**TOTAL** ${item.alias} 无数值可累加（字段缺失或全为非数值），返回 null`, "TOTAL");
+        } else {
+          value = sum;
+          if (skipped > 0) warn?.(`**TOTAL** ${item.alias} 跳过 ${skipped} 个非数值行`, "TOTAL");
+        }
+      }
+      globals.set(alias, value);
+      aggMsgs.push(`${alias} = ${value === null ? "null" : value}`);
+    }
+  }
+
   // ---- WHERE ----
   let whereMsg: string | null = null;
   if (q.where) {
@@ -246,6 +248,22 @@ export function executeQuery(
       const excluded = before.filter((r) => !matched.includes(r)).slice(0, 3).map((r) => r.path);
       whereMsg = `过滤 ${before.length} → ${matched.length} 行` +
         (excluded.length ? `（剔除示例：${excluded.join(", ")}）` : "");
+    }
+  }
+
+  // ---- COUNT（DSQL 2.3：WHERE 过滤后行集上的显式比较计数，填充槽位；无 WHERE 时 = FROM 全量口径） ----
+  const countMsgs: string[] = [];
+  if (q.count && q.count.length > 0) {
+    globals ??= new Map();
+    for (const item of q.count) {
+      let n = 0;
+      for (const row of matched) {
+        if (truthy(evaluateExpr(item.cmp, row, ctx, track, warn))) n++;
+      }
+      globals.set(item.slot, n);
+      if (enabled) {
+        countMsgs.push(`${item.slot} = ${n}（${q.where ? "WHERE 过滤后行集" : "FROM 全量口径"}）`);
+      }
     }
   }
 
@@ -269,10 +287,11 @@ export function executeQuery(
   }
 
   // ---- SELECT 投影 ----
-  const columns = resolveColumns(q.select, matched);
+  const columns = resolveColumns(q.select, matched, globals);
 
-  // SELECT 仅含 TOTAL 项 → 单行合成结果（行字段为空，文件名"汇总"）
-  if (totalItems.length > 0 && q.select !== "*" && totalItems.length === q.select.length) {
+  // SELECT 仅含槽位 / TOTAL 项（且至少有一个 TOTAL）→ 单行合成结果（行字段为空，文件名"汇总"）
+  const onlyFillers = q.select !== "*" && q.select.every((s) => s.total || s.slot);
+  if (totalItems.length > 0 && onlyFillers) {
     matched = [SYNTH_ROW];
   }
 
@@ -293,6 +312,7 @@ export function executeQuery(
       sourceStats: sourceStats ?? [],
       aggregates: aggMsgs,
       search: searchStats ?? [],
+      count: countMsgs,
       executionTimeMs: round1(now() - started),
     };
   }
@@ -311,18 +331,33 @@ const FILE_KEYS = new Set(["path", "name", "folder", "ext", "size", "ctime", "mt
 
 /* ---------- SELECT 列 ---------- */
 
-function resolveColumns(select: Query["select"], rows: DataRow[]): ResultSet["columns"] {
+function resolveColumns(select: Query["select"], rows: DataRow[], globals: Map<string, FieldValue> | null): ResultSet["columns"] {
   if (select === "*") {
     // 自动列：结果行字段并集（UTF-8 字节序），作为字段表达式
     const keys = new Set<string>();
     for (const row of rows) for (const k of Object.keys(row.fields)) keys.add(k);
     return [...keys].sort(compareUtf8).map((field) => ({ alias: field, expr: { kind: "field", path: field } as Expr }));
   }
-  return select.map((sel, i) => ({
-    alias: sel.alias ?? defaultAlias(sel.expr, i),
-    expr: sel.expr,
-    total: sel.total,
-  }));
+  // TOTAL 项自声明自投影（只读，从变量表取值）；同名的裸槽位不再重复投影
+  const totalAliases = new Set(select.filter((s) => s.total).map((s) => s.alias ?? ""));
+  const cols: ResultSet["columns"] = [];
+  for (let i = 0; i < select.length; i++) {
+    const sel = select[i];
+    if (sel.total) {
+      cols.push({ alias: sel.alias ?? "", expr: sel.expr, total: true });
+      continue;
+    }
+    if (sel.slot) {
+      // 裸槽位：被 TOTAL 项投影或未填充 → 静默忽略；由 COUNT 填充 → 常量列（只读）
+      const name = sel.expr.kind === "variable" ? sel.expr.name : "";
+      if (!totalAliases.has(name) && globals?.has(name)) {
+        cols.push({ alias: name, expr: sel.expr, total: true });
+      }
+      continue;
+    }
+    cols.push({ alias: sel.alias ?? defaultAlias(sel.expr, i), expr: sel.expr, total: sel.total });
+  }
+  return cols;
 }
 
 function defaultAlias(expr: Expr, index: number): string {

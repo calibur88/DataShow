@@ -49,6 +49,7 @@ export const KEYWORDS = new Set([
   "SELECT", "FROM", "WHERE", "SORT", "BY", "AND", "OR", "NOT", "AS",
   "LIMIT", "ASC", "DESC", "TABLE_VIEW", "LIST_VIEW", "CARD_VIEW", "WITHOUT", "ID",
   "SEARCH",
+  "COUNT",
 ]);
 
 /** DSQL 1.4：聚合关键词（仅 SELECT 项合法，parser 单独拦截，不入 KEYWORDS 以免其他子句误吞） */

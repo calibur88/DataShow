@@ -126,13 +126,13 @@ test("parse → execute 全链路（表达式求值与列别名一致）", () =>
 /* ---------- DSQL 1.4：TOTAL 聚合与 $变量$ 校验 ---------- */
 
 test("**TOTAL** 必须带 **AS** 别名", () => {
-  assert.throws(() => parseQuery(`**SELECT** **TOTAL** 成绩 **FROM** "M"`), /TOTAL 必须带 AS 别名|必须带 \*\*AS\*\* 别名/);
+  assert.throws(() => parseQuery(`**SELECT** **TOTAL** 成绩 **FROM** "M"`), /TOTAL 必须带|必须带 \*\*AS\*\*/);
 });
 
 test("**TOTAL** 操作数内引用变量 → 致命报错", () => {
   assert.throws(
     () => parseQuery(`**SELECT** **TOTAL** $总薪资$ **AS** $x$ **FROM** "M"`),
-    /不支持引用变量/,
+    /循环依赖/,
   );
 });
 
@@ -143,11 +143,11 @@ test("WHERE 中引用 $变量$ → 致命报错（变量仅 SELECT 可用）", (
   );
 });
 
-test("引用未定义变量（含反向引用）→ 致命报错", () => {
-  assert.throws(() => parseQuery(`**SELECT** $平均分$ **AS** $x$ **FROM** "M"`), /变量 \$平均分\$ 未定义/);
+test("引用未声明变量（含反向引用）→ 致命报错", () => {
+  assert.throws(() => parseQuery(`**SELECT** $平均分$ **AS** $x$ **FROM** "M"`), /变量 \$平均分\$ 未声明/);
   assert.throws(
     () => parseQuery(`**SELECT** 成绩 %-% $平均分$ **AS** $偏差$, ($总成绩$ %/% 2) **AS** $平均分$ **FROM** "M"`),
-    /变量 \$平均分\$ 未定义/,
+    /变量 \$平均分\$ 未声明/,
   );
 });
 
@@ -183,11 +183,14 @@ test("别名与行字段名冲突 → 致命报错（执行期校验）", () => 
   );
 });
 
-test("AS 别名接受 $var$ 与裸名两种写法（归一化）", () => {
-  const a = parseQuery(`**SELECT** **TOTAL** 1 **AS** $总人数$ **FROM** "M"`);
-  const b = parseQuery(`**SELECT** **TOTAL** 1 **AS** 总人数 **FROM** "M"`);
-  assert.deepEqual((a.select as ColumnSel[])[0].alias, "总人数");
-  assert.deepEqual((b.select as ColumnSel[])[0].alias, "总人数");
+test("TOTAL **AS** 强制 $槽位$（DSQL 2.3：裸名写法 → 致命）", () => {
+  const a = parseQuery(`**SELECT** $总人数$, **TOTAL** 1 **AS** $总人数$ **FROM** "M"`);
+  assert.deepEqual((a.select as ColumnSel[])[0].slot, true); // 裸槽位声明
+  assert.deepEqual((a.select as ColumnSel[])[1].alias, "总人数"); // TOTAL 填充同名槽位
+  assert.throws(
+    () => parseQuery(`**SELECT** **TOTAL** 1 **AS** 总人数 **FROM** "M"`),
+    /别名必须为槽位/,
+  );
 });
 
 console.log(`\nDSQL 语言示例测试：全部 ${passed} 个通过`);

@@ -10,7 +10,7 @@
  * 旧 **TABLE** / **LIST** 已被词法器废除，落到"未知关键词"分支抛 LexError。
  */
 
-import type { BinOp, ColumnSel, Expr, Query, SearchItemNode, SortClause, SortKey, Source } from "./ast";
+import type { BinOp, ColumnSel, CountItemNode, Expr, Query, SearchItemNode, SortClause, SortKey, Source } from "./ast";
 import { FUNCTIONS, Lexer, type Token } from "./lexer";
 import type { FieldValue, ViewType } from "./types";
 
@@ -99,6 +99,7 @@ class Parser {
     let from: Source | null = null;
     let where: Expr | null = null;
     let search: SearchItemNode[] | null = null;
+    let count: CountItemNode[] | null = null;
     let sort: SortClause | null = null;
     let limit: number | null = null;
     const seen = new Set<string>();
@@ -113,6 +114,11 @@ class Parser {
         this.expectOnce(seen, "FROM");
         this.advance();
         from = this.parseSource();
+      } else if (this.isMarked("COUNT")) {
+        this.expectOnce(seen, "COUNT");
+        this.requirePrerequisite(seen, "COUNT", "FROM");
+        this.advance();
+        count = this.parseCountClause();
       } else if (this.isMarked("SEARCH")) {
         this.expectOnce(seen, "SEARCH");
         this.requirePrerequisite(seen, "SEARCH", "FROM");
@@ -167,12 +173,72 @@ class Parser {
       }
     }
 
-    const trailing = this.peek();
-    if (trailing.type !== "eof") {
-      throw this.err(trailing, `多余的查询子句「${describe(trailing)}」（子句：SELECT / FROM / WHERE / SEARCH / SORT / LIMIT / WITHOUT ID，每条至多一次）`);
+    // COUNT 填充目标必须是 SELECT 声明的裸槽位（TOTAL 项自声明自填充，不受此限）；
+    // 输出别名（expr AS $x$）不是可填充槽位；SELECT 已解析完整，槽位声明位置不限
+    for (const [name, tok] of this.countFillTokens) {
+      if (this.varAliasTokens.has(name)) {
+        throw this.err(tok, `$${name}$ 非槽位声明，不可被聚合填充`);
+      }
+      if (!this.slotTokens.has(name)) {
+        throw this.err(tok, `映射名 $${name}$ 未在 SELECT 声明`);
+      }
     }
 
-    return { view, withoutId: seen.has("WITHOUT ID"), select, from, where, search, sort, limit };
+    const trailing = this.peek();
+    if (trailing.type !== "eof") {
+      throw this.err(trailing, `多余的查询子句「${describe(trailing)}」（子句：SELECT / FROM / WHERE / SEARCH / COUNT / SORT / LIMIT / WITHOUT ID，每条至多一次）`);
+    }
+
+    return { view, withoutId: seen.has("WITHOUT ID"), select, from, where, search, count, sort, limit };
+  }
+
+  /* ---------- COUNT（DSQL 2.3 分类计数） ---------- */
+
+  /** 聚合填充目标（TOTAL 自声明自填充；COUNT 须指向 SELECT 声明的裸槽位） */
+  private fillTokens = new Map<string, Token>();
+  /** COUNT 填充目标（严格校验子集：必须在 SELECT 声明裸槽位） */
+  private countFillTokens = new Map<string, Token>();
+  /** 裸 $x$ 槽位声明（SELECT 内；COUNT 填充的前提，未填充静默忽略） */
+  private slotTokens = new Map<string, Token>();
+  /** expr AS $x$ 输出别名（与槽位共用命名空间，不可被聚合填充） */
+  private varAliasTokens = new Map<string, Token>();
+  private lastAliasWasVar = false;
+
+  /**
+   * count_clause = **COUNT** , count_item , { "," , count_item } ;
+   * count_item   = comparison , **AS** , variable（槽位）；
+   * 必须显式比较符（裸操作数致命）；比较内引用聚合变量 → 循环依赖致命。
+   */
+  private parseCountClause(): CountItemNode[] {
+    const items: CountItemNode[] = [];
+    do {
+      const start = this.peek();
+      const expr = this.parseComparison();
+      if (expr.kind !== "binary" || !["==", "!=", ">", "<", ">=", "<="].includes(expr.op)) {
+        throw this.err(start, "**COUNT** 需比较语句（显式比较符：%==% / %!=% / %>% / %<% / %>=% / %<=%）");
+      }
+      const hasVar = (e: Expr): boolean =>
+        e.kind === "variable" ||
+        (e.kind === "binary" && (hasVar(e.left) || hasVar(e.right))) ||
+        (e.kind === "unary" && hasVar(e.expr)) ||
+        (e.kind === "call" && e.args.some(hasVar));
+      if (hasVar(expr)) {
+        throw this.err(start, "聚合项内不得引用聚合变量（循环依赖）");
+      }
+      this.expectKw("AS");
+      const t = this.peek();
+      if (t.type !== "variable") {
+        throw this.err(t, "**COUNT** 别名必须为槽位（$变量$，在 **SELECT** 中声明）");
+      }
+      this.advance();
+      if (this.fillTokens.has(t.value)) {
+        throw this.err(t, `槽位 $${t.value}$ 已被填充`);
+      }
+      this.fillTokens.set(t.value, t);
+      this.countFillTokens.set(t.value, t);
+      items.push({ cmp: expr, slot: t.value, line: t.line, col: t.col });
+    } while (this.matchPunct(","));
+    return items;
   }
 
   /* ---------- SEARCH（DSQL 2.2 正文抽取） ---------- */
@@ -252,9 +318,23 @@ class Parser {
           items.push(this.parseTotalItem());
           continue;
         }
+        const itemTok = this.peek();
         const expr = this.parseExpr();
         let alias: string | null = null;
         if (this.matchKw("AS")) alias = this.parseAlias();
+        // 裸 $x$ 槽位声明（expr 为变量引用且无别名）：由 TOTAL / COUNT 填充
+        if (alias === null && expr.kind === "variable") {
+          if (this.slotTokens.has(expr.name) || this.varAliasTokens.has(expr.name)) {
+            throw this.err(itemTok, `槽位 $${expr.name}$ 重复声明`);
+          }
+          this.slotTokens.set(expr.name, itemTok);
+          items.push({ expr, alias: null, slot: true });
+          continue;
+        }
+        // expr AS $x$：输出别名，与槽位声明撞名 → 重复声明（统一命名空间）
+        if (alias !== null && this.lastAliasWasVar && this.slotTokens.has(alias)) {
+          throw this.err(itemTok, `槽位 $${alias}$ 重复声明`);
+        }
         items.push({ expr, alias });
       } while (this.matchPunct(","));
     } finally {
@@ -264,14 +344,14 @@ class Parser {
     return items;
   }
 
-  /** **TOTAL** 聚合项：操作数限字段/数字，**AS** 别名强制（DSQL 1.4） */
+  /** **TOTAL** 聚合项：操作数限字段/数字，**AS** 强制 $槽位$（DSQL 1.4 引入；2.3 起仅填充不投影） */
   private parseTotalItem(): ColumnSel {
     const start = this.advance(); // TOTAL
     this.totalToken = start;
     const tok = this.peek();
     let expr: Expr;
     if (tok.type === "variable") {
-      throw this.err(tok, `**TOTAL** 不支持引用变量（$${tok.value}$ 看不到当前行）`);
+      throw this.err(tok, "聚合项内不得引用聚合变量（循环依赖）");
     }
     if (tok.type === "ident") {
       const lower = tok.value.toLowerCase();
@@ -287,18 +367,32 @@ class Parser {
       throw this.err(tok, "**TOTAL** 操作数应为字段名或数字（如 **TOTAL** 薪资 / **TOTAL** 1）");
     }
     if (!this.matchKw("AS")) {
-      throw this.err(start, "**TOTAL** 必须带 **AS** 别名（如 **TOTAL** 成绩 **AS** $总成绩$）");
+      throw this.err(start, "**TOTAL** 必须带 **AS** 槽位（如 **TOTAL** 成绩 **AS** $总成绩$）");
     }
-    return { expr, alias: this.parseAlias(), total: true };
+    const t = this.peek();
+    if (t.type !== "variable") {
+      throw this.err(t, "**TOTAL** 别名必须为槽位（$变量$，在 **SELECT** 中声明）");
+    }
+    this.advance();
+    if (this.fillTokens.has(t.value)) {
+      throw this.err(t, `槽位 $${t.value}$ 已被填充`);
+    }
+    this.fillTokens.set(t.value, t);
+    return { expr, alias: t.value, total: true };
   }
 
-  /** AS 别名：接受裸标识符或 $变量$ 写法，统一归一化为裸名；SELECT 内别名互不相同（DSQL 1.5） */
+  /** AS 别名：裸标识符或 $变量$（后者为输出别名，与槽位共用命名空间）；SELECT 内别名互不相同 */
   private parseAlias(): string {
     const tok = this.peek();
     let name: string;
+    this.lastAliasWasVar = tok.type === "variable";
     if (tok.type === "variable") {
       this.advance();
       name = tok.value;
+      if (this.varAliasTokens.has(name)) {
+        throw this.err(tok, `别名 '$${name}$' 重复定义（SELECT 内 **AS** 别名互不相同）`);
+      }
+      this.varAliasTokens.set(name, tok);
     } else {
       name = this.expectIdent("**AS** 后应为别名（标识符或 $变量$）").value;
     }
@@ -309,39 +403,40 @@ class Parser {
     return name;
   }
 
-  /** 静态校验：$变量$ 引用必须匹配更早定义的别名；TOTAL 操作数内禁止引用变量 */
+  /** 静态校验：$变量$ 引用须指向槽位/聚合填充名或更早的输出别名；聚合项（TOTAL）内引用变量 → 循环依赖 */
   private validateVariables(items: ColumnSel[]): void {
-    const defined = new Set<string>();
-    const check = (expr: Expr, inTotal: boolean): void => {
+    const slots = new Set([...this.slotTokens.keys(), ...this.fillTokens.keys()]);
+    const declared = new Set<string>();
+    const check = (expr: Expr, inAgg: boolean): void => {
       switch (expr.kind) {
         case "variable":
-          if (inTotal) {
-            throw this.err(this.totalToken ?? this.tokens[0], `**TOTAL** 不支持引用变量（$${expr.name}$ 看不到当前行）`);
+          if (inAgg) {
+            throw this.err(this.totalToken ?? this.tokens[0], "聚合项内不得引用聚合变量（循环依赖）");
           }
-          if (!defined.has(expr.name)) {
+          if (!slots.has(expr.name) && !declared.has(expr.name)) {
             throw this.err(
               this.variableTokens.get(expr.name) ?? this.tokens[0],
-              `变量 $${expr.name}$ 未定义（引用前需在 **SELECT** 中以 **AS** 定义，且不能引用其后定义的变量）`,
+              `变量 $${expr.name}$ 未声明（在 **SELECT** 中以裸 $${expr.name}$ 声明槽位，或先以 **AS** $${expr.name}$ 定义）`,
             );
           }
           return;
         case "binary":
-          check(expr.left, inTotal);
-          check(expr.right, inTotal);
+          check(expr.left, inAgg);
+          check(expr.right, inAgg);
           return;
         case "unary":
-          check(expr.expr, inTotal);
+          check(expr.expr, inAgg);
           return;
         case "call":
-          for (const arg of expr.args) check(arg, inTotal);
+          for (const arg of expr.args) check(arg, inAgg);
           return;
         default:
           return;
       }
     };
     for (const item of items) {
-      if (item.alias) defined.add(item.alias);
       check(item.expr, item.total === true);
+      if (item.alias && this.varAliasTokens.has(item.alias)) declared.add(item.alias);
     }
   }
 

@@ -1,8 +1,8 @@
 # DSQL 语言规范
 
 > **DSQL**（DataShow Query Language）—— Obsidian 元数据查询方言。
-> **DSQL 语言版本**：`2.2`（v2.2 新增 `**SEARCH**` 正文抽取子句与 §6.3 算术 / 比较补丁；
-> v2.1 新增 `[ext]` 后缀过滤原子与非 md 数据源；v2.0 视图关键词统一 `*_VIEW` 后缀）
+> **DSQL 语言版本**：`2.3`（v2.3 新增 `**COUNT**` 分类计数子句与槽位模型，SEARCH 提前至聚合遍之前；
+> v2.2 新增 `**SEARCH**` 正文抽取子句与 §6.3 算术 / 比较补丁；v2.1 新增 `[ext]` 后缀过滤）
 > **文档版本**：`2.3.0`（语言版本与插件版本各自独立）
 >
 > 本文档为权威依据：语法 EBNF + 语义逐条定义，语言变更需同步本文与 `tests/` 用例。
@@ -14,13 +14,13 @@
 | 属性 | 说明 |
 |---|---|
 | **标记体系（字面语法）** | 关键词 / 函数：`**WORD**` 包裹 · 运算符：`%op%` 包裹 · 字符串：`'...'` · 路径：`"..."` · 字段：裸标识符 |
-| **子句顺序（前件关系）** | 书写顺序自由，每条子句至多一次；**WHERE / SEARCH / SORT / LIMIT 以 `**FROM**` 为前件**；`**SELECT**` 可省略（默认 `*`） |
-| **执行顺序** | FROM 源解析 → [ext] 行并入 → 聚合遍（TOTAL，恒基于 FROM 全量命中行，含非 md）→ SEARCH 正文抽取 → WHERE 行过滤 → SORT 排序 → LIMIT 截断 → SELECT 投影（与书写顺序无关，由 AST 固定） |
+| **子句顺序（前件关系）** | 书写顺序自由，每条子句至多一次；**WHERE / SEARCH / COUNT / SORT / LIMIT 以 `**FROM**` 为前件**；`**SELECT**` 可省略（默认 `*`） |
+| **执行顺序** | FROM 源解析 → [ext] 行并入 → SEARCH 正文抽取 → 聚合遍（TOTAL）→ WHERE 行过滤 → COUNT 分类计数 → SORT 排序 → LIMIT 截断 → SELECT 投影（与书写顺序无关，由 AST 固定） |
 | **数据中立** | 不预设字段；UTF-8 字节序确定性排序 |
 | **非致命语义** | 类型不匹配 / 除零 / 字段缺失求值为 null，不中断查询，计入 `warnings` |
 
 **关键词（`**` 包裹，约定全大写）**：
-`SELECT FROM WHERE SEARCH SORT BY AND OR NOT AS LIMIT ASC DESC TABLE_VIEW LIST_VIEW CARD_VIEW WITHOUT ID TOTAL`
+`SELECT FROM WHERE SEARCH COUNT SORT BY AND OR NOT AS LIMIT ASC DESC TABLE_VIEW LIST_VIEW CARD_VIEW WITHOUT ID TOTAL`
 
 **内置函数（`**` 包裹，约定小写）**：
 `sqrt cbrt root contains length lower upper empty`
@@ -46,7 +46,7 @@ OP_POW     = "%^%" ;
 IDENT      = ident_start , { ident_part } , { "." , ident_start , { ident_part } } ;
 (* 支持 Unicode 字母（中文一等公民）与带点路径：file.name / this.状态 *)
 
-VARIABLE   = "$" , ident , "$" ;     (* 派生变量引用，value 为裸名 *)
+VARIABLE   = "$" , ident , "$" ;     (* 槽位名：TOTAL / COUNT 的填充目标，或 SELECT 内的声明 / 引用 *)
 
 NUMBER     = digit , { digit } , [ "." , digit , { digit } ] ;
 (* 小数点后必须至少一位数字："1." 与 ".5" 均为词法错误 *)
@@ -66,7 +66,7 @@ EXT_FILTER = "[" , [ ext , { "," , ext } ] , "]" ;  (* [ext] 后缀过滤，ext 
 
 ```ebnf
 query          = [ view ] , { clause } , EOF ;             (* 各 clause 至多一次；WHERE/SORT/LIMIT 要求 FROM 已出现 *)
-clause         = select_clause | from_clause | where_clause | search_clause
+clause         = select_clause | from_clause | where_clause | search_clause | count_clause
                | sort_clause | limit_clause | without_id ;
 
 view           = **TABLE_VIEW** | **LIST_VIEW** | **CARD_VIEW** ;  (* 缺省 TABLE_VIEW *)
@@ -80,7 +80,12 @@ search_item    = STRING , **AS** , ident ;                 (* 正则 + 裸标识
 limit_clause   = **LIMIT** , NUMBER ;                      (* 前件：FROM *)
 select_list    = "*" | select_item , { "," , select_item } ;
 select_item    = expr , [ **AS** , alias ]                 (* 别名为裸标识符或 $变量$，归一化为裸名 *)
-               | **TOTAL** , ( ident | NUMBER ) , **AS** , alias ;  (* 聚合项：别名强制 *)
+               | **TOTAL** , ( ident | NUMBER ) , **AS** , variable ;  (* 聚合项：填充 $槽位$，自声明自投影 *)
+               | variable ;                                           (* 裸槽位声明（同名至多一次）；
+                                                                         由 TOTAL / COUNT 填充，未填充静默忽略 *)
+count_clause   = **COUNT** , count_item , { "," , count_item } ;      (* 独立子句，前件 FROM，至多一次 *)
+count_item     = comparison , **AS** , variable ;                     (* 显式比较（裸操作数致命）；
+                                                                         AS 强制 $槽位$，须已在 SELECT 声明 *)
 alias          = ident | variable ;                        (* 归一化为裸名，进入变量命名空间 *)
                                                                (* 全部别名互不相同，且不得与行字段同名（§6.7） *)
 source         = or_source ;
@@ -148,7 +153,8 @@ function_call  = **函数名** , "(" , [ expr , { "," , expr } ] , ")" ;
 | `**SELECT**` | ❌ | — | 省略 = `*` 全字段；可写在任意位置 |
 | `**FROM**` | ✅ | — | 唯一必填子句（数据源；唯一能提供文本的子句） |
 | `**WHERE**` | ❌ | `**FROM**` | 行过滤 |
-| `**SEARCH**` | ❌ | `**FROM**` | 正文正则抽字段（§6.10）；执行在 WHERE 之前 |
+| `**SEARCH**` | ❌ | `**FROM**` | 正文正则抽字段（§6.10）；执行在聚合遍之前 |
+| `**COUNT**` | ❌ | `**FROM**` | 分类聚合计数（§6.11）；执行于 WHERE 后 / SORT 前，与 WHERE 书写先后自由 |
 | `**SORT**` | ❌ | `**FROM**` | 多级排序 + 自定义优先级 |
 | `**LIMIT**` | ❌ | `**FROM**` | 截断 |
 | `**WITHOUT** **ID**` | ❌ | — | 隐藏文件列，任意位置 |
@@ -297,6 +303,7 @@ function_call  = **函数名** , "(" , [ expr , { "," , expr } ] , ")" ;
 | `limit` | 截断前 / 后行数 |
 | `aggregates` | 各 `**TOTAL**` 项结果（调试页 AGG 行） |
 | `search` | 各 SEARCH 模板命中数 / 未命中数 / 抽取示例 ≤3（调试页 SEARCH 行） |
+| `count` | 各 `**COUNT**` 计数项结果（调试页 COUNT 行） |
 | `fieldMisses` | 缺失字段名、次数、首个示例路径 |
 | `warnings` | 非致命问题列表（结构化 `type` + `message`，含次数；类型如 除零 / 类型不匹配 / 未知函数 / TOTAL / SORT / **duplicateKey**） |
 | `executionTimeMs` | 执行耗时（ms） |
@@ -309,12 +316,15 @@ function_call  = **函数名** , "(" , [ expr , { "," , expr } ] , ")" ;
 **两遍执行模型**：
 
 ```
-第一遍 聚合遍：扫描 FROM 全量命中行（含 [ext] 并入行，恒忽略 WHERE），计算所有 **TOTAL** 项 → 写入变量表
-第二遍 投影遍：SEARCH 正文抽取 → WHERE → SORT → LIMIT → SELECT 逐行求值（$变量$ 查变量表，裸标识符查行字段）
+第一遍 聚合遍：SEARCH 正文抽取后，扫描 FROM 全量命中行（含 [ext] 并入行，恒忽略 WHERE），
+              计算所有 **TOTAL** 项 → 写入变量表
+第二遍 投影遍：WHERE → **COUNT** 分类计数 → SORT → LIMIT → SELECT 逐行求值
+              （$变量$ 查变量表，裸标识符查行字段）
 ```
 
-> [ext] 并入行在聚合遍**之前**并入（TOTAL 的「全量」含非 md 行）；SEARCH 抽取在聚合遍**之后**执行
-> （TOTAL 无法聚合 SEARCH 字段）。
+> [ext] 并入行与 SEARCH 抽取均在聚合遍**之前**（TOTAL 的「全量」含非 md 行；
+> 数值型 SEARCH 抽取字段可被 TOTAL 聚合）；**COUNT** 在 WHERE 之后、SORT 之前执行，
+> 口径 = WHERE 过滤后行集（§6.11）。
 
 **变量表查询规则（两套命名空间完全隔离）**：
 
@@ -357,9 +367,11 @@ function_call  = **函数名** , "(" , [ expr , { "," , expr } ] , ")" ;
 
 - `**TOTAL**` 的行集口径恒为 FROM 全量命中行，**始终忽略 WHERE**（全局基准值，供每行算占比 / 偏差）；
   过滤后聚合暂不支持——变通：单独建看板，或用标签 / 子文件夹等数据源缩小口径使 TOTAL 恰为所需范围；
-- `**TOTAL**` 在聚合遍计算，早于 SEARCH 抽取，因此**无法聚合 SEARCH 抽出的字段**；
-  要按抽取字段聚合，须改用 frontmatter 或非 md 字段（设计取舍，非缺陷）；
-- SELECT **仅含 TOTAL 项**时输出单行合成结果（文件名「汇总」，列名为变量名）；
+- `**TOTAL**` 在聚合遍计算，晚于 SEARCH 抽取（§6.10）：数值型抽取字段**可以**被 TOTAL 聚合
+  （DSQL 2.3 起）；早于 **COUNT**（§6.11），因此**无法聚合 COUNT 的计数结果**；
+- `**TOTAL**` 的 `**AS**` 强制 `$槽位$` 写法（DSQL 2.3 破坏性修订）：聚合项自声明自投影
+  （同名的裸槽位声明不再重复投影），裸名别名 → parse 期致命；
+- SELECT **仅含槽位 / TOTAL 项**（且至少一个 TOTAL）时输出单行合成结果（文件名「汇总」）；
 - 派生变量列为**只读**（卡片视图内联编辑不生效；列表视图以辅助信息行展示）。
 
 ### 6.8 错误处理
@@ -479,7 +491,56 @@ md 行与 [ext] 并入行在 SEARCH 阶段一视同仁（这也是「FROM 唯一
 | prepare 期（FROM 元数据收集后、抽取前） | SEARCH 别名与 FROM 命中行的 frontmatter 字段名并集冲突；与 `file.*` 内置字段冲突 | 致命，错误信息带 SEARCH 别名的行列号（parse 期记录进 AST） |
 
 **调试**：§6.6 调试信息新增 `search` 字段——各模板命中数 / 未命中数 / 抽取示例 ≤3。
-**TOTAL 口径不变**：恒忽略 WHERE，基于 FROM 全量命中行（含 [ext] 非 md 行）；SEARCH 在聚合遍之后执行，TOTAL 不含抽取字段。
+**TOTAL 口径不变**：恒忽略 WHERE，基于 FROM 全量命中行（含 [ext] 非 md 行）；SEARCH 在聚合遍之前执行，数值型抽取字段可被 TOTAL 聚合（DSQL 2.3 起）；**COUNT** 计数在聚合遍之后，TOTAL 不可见。
+
+### 6.11 COUNT 分类计数（DSQL 2.3）
+
+`**COUNT**` 是独立子句（不是函数、不进表达式）：对 **WHERE 过滤后行集**逐行求显式比较语句，
+为真的行数（标量）填充 SELECT 声明的 `$槽位$`。
+
+| 属性 | 说明 |
+|---|---|
+| 位置 | 独立子句，与 WHERE 同层书写；前件 `**FROM**`（与 WHERE 书写先后自由） |
+| 执行遍 | WHERE 之后、SORT 之前；无 `**WHERE**` 时直接接在聚合遍之后 |
+| 口径 | WHERE 过滤后行集；无 WHERE 时 = FROM 全量命中行（含 [ext] 并入行） |
+| 输入 | 一条显式比较语句 `left <cmp_op> right`（裸操作数 → parse 期致命） |
+| 输出 | 为真的行数，填充 `$槽位$`；空行集 → 0，不 warning |
+| 求值口径 | 复用 §6.3 比较表（null 同一性 / 非原始值守卫 / 隐式数值转换）；求值异常的行不计入并计入 warnings |
+| 可引用 | SEARCH 抽取字段 ✓、[ext] 并入行 ✓（均先于 COUNT 执行）；聚合变量 ✗（循环依赖致命） |
+
+```sql
+-- 分类计数（多槽位）
+**TABLE_VIEW** **SELECT**
+  state, $过载数$, $无事发生$
+**FROM** "示例"
+**COUNT**
+  state %==% '过载' **AS** $过载数$,
+  state %==% '无' **AS** $无事发生$
+
+-- 恒真惯用法：true %==% true = WHERE 过滤后行数（SQL COUNT(*) 等价；与 TOTAL 1 全量口径对照）
+**SELECT**
+  **TOTAL** 1 **AS** $全量$,
+  $过滤文件数$
+**FROM** "示例/logs"
+**WHERE** [md, gnd]
+**COUNT** true %==% true **AS** $过滤文件数$
+```
+
+**槽位模型（三集合满射）**：S = SELECT 里声明的裸 `$x$` 项；F = TOTAL / COUNT 的 `**AS**` 填充名。
+
+1. 裸 `$x$` 项 = 槽位声明，同名至多一次（重复 → parse 期致命「槽位 $x$ 重复声明」）；
+2. COUNT 的 `**AS** $x$` 必须已在 SELECT 声明（未声明 → 致命「映射名 $x$ 未在 SELECT 声明」；
+   TOTAL 项自声明自填充，不受此限）；
+3. 声明了未填充的槽位 → **静默忽略**（不投影、不报错）；
+4. 一个槽位至多被一个聚合填充（TOTAL / COUNT 共享命名空间，双填充 → 致命「槽位 $x$ 已被填充」）；
+5. `expr **AS** $x$` 的 `$x$` 是输出别名，不构成可填充槽位（聚合指向它 → 致命「非槽位声明」）；
+   与同名裸槽位声明撞名 → 致命「重复声明」（统一命名空间）；
+6. `$x$` 引用（SELECT 表达式内）须指向槽位 / 聚合填充名或更早的输出别名（未声明 → 致命）；
+   `$x$` 出现在 WHERE / SORT → parse 期致命（执行在聚合之前，值尚不存在）。
+
+**与 TOTAL 的两口径对照**：`**TOTAL**` 与 `**COUNT**` 产出形式相同（填充槽位），求值位置不同——
+TOTAL 在聚合遍（恒 FROM 全量口径，忽略 WHERE）；COUNT 在 WHERE 之后（过滤后口径；无 WHERE 时
+退化为全量口径）。两者互不引用，只能通过 SELECT 数学表达式组合（如 `$全量$ %-% $过载数$`）。
 
 ---
 

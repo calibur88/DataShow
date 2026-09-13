@@ -444,6 +444,9 @@ export function createPanelController(
           (stat.samples.length > 0 ? `，示例：${stat.samples.join("、")}` : ""),
       });
     }
+    for (const msg of dbg.count ?? []) {
+      entries.push({ op: "COUNT", message: msg });
+    }
     for (const miss of dbg.fieldMisses) {
       entries.push({
         op: "FIELD",

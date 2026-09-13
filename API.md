@@ -1,7 +1,7 @@
 # DataShow API 文档
 
 分两部分：**官方 API**（Obsidian 提供、本插件用到的接口）与**插件 API**（DataShow 自身导出、
-可供二次开发 / 测试使用的接口）。示例均基于当前版本（插件 2.1.4，DSQL 2.2，minAppVersion 1.4.4）。
+可供二次开发 / 测试使用的接口）。示例均基于当前版本（插件 2.1.4，DSQL 2.3，minAppVersion 1.4.4）。
 
 ---
 
@@ -62,7 +62,7 @@ import { executeQuery, evaluateExpr, compareUtf8 } from "./src/core/dsql/executo
 | 导出 | 签名 | 说明 |
 |---|---|---|
 | `parseQuery(source)` | `string → Query` | DSQL → AST；错误 `QueryParseError`（带 line / col） |
-| `executeQuery(q, rows, ctx, opts?)` | `→ ResultSet` | 执行：FROM 源解析 → [ext] 行并入 → 聚合遍（TOTAL）→ SEARCH 正文抽取 → WHERE / SORT / LIMIT / SELECT；`opts.debug` 收集调试信息，`opts.ingestWarnings` 并入摄取期警告，`opts.extRows` / `opts.bodies` 由面板按 FROM 范围预读后传入 |
+| `executeQuery(q, rows, ctx, opts?)` | `→ ResultSet` | 执行：FROM 源解析 → [ext] 行并入 → SEARCH 正文抽取 → 聚合遍（TOTAL）→ WHERE → COUNT → SORT / LIMIT / SELECT；`opts.debug` 收集调试信息，`opts.ingestWarnings` 并入摄取期警告，`opts.extRows` / `opts.bodies` 由面板按 FROM 范围预读后传入 |
 | `evaluateExpr(expr, row, ctx, track?, warn?, vars?)` | `→ FieldValue` | 单表达式求值（面板渲染单元格共用） |
 | `truthy(v)` | `FieldValue → boolean` | 裸真值判断（empty 值 / null / 0 / false / 空串 / 空数组 → 假） |
 | `compareUtf8(a, b)` | `(string, string) → number` | UTF-8 字节序比较（排序 / 自动列的确定性基准） |
