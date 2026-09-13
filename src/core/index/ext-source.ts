@@ -1,12 +1,14 @@
 /**
  * @module index/ext-source
- * @description [ext] 文件级读取：FROM 目录收集 → 按后缀分派两条正交解析路径 → 构造行
+ * @description [ext] 文件级读取与 body 预读：FROM 目录收集 → 按后缀分派两条正交解析路径 → 构造行
  *
- * 执行语义（规范 §4，WHERE 阶段第一步，先于行级条件求值）：
+ * 执行语义（[ext]：FROM 解析后立即并入行集——聚合遍 TOTAL 计入非 md 行——先于行级条件求值）：
  * - md → 官方路径（metadataCache frontmatter，无任何回退）；
  * - 非 md → 自研路径（cachedRead 原文 + parseYamlFallback）；
  * 两条路径不合并、不对照、不补空——同一个文件只走一条路径；失败文件剔除并计数，查询继续。
  * 禁止全库扫描：listFiles 只收 FROM 目录集合。
+ * loadBodies（SEARCH 用）同样以 FROM 命中范围为界：md 剥 frontmatter、非 md 剥围栏块
+ * （core/body.ts），随行临时携带、不缓存不常驻。
  */
 
 import type { Source } from "@dsql/ast";
@@ -18,6 +20,7 @@ import {
 } from "@dsql/executor";
 import type { DataRow } from "@dsql/types";
 import type { IFileMeta } from "@host/types";
+import { extractMdBody, stripFenceBlocks } from "./body";
 import { buildRow } from "./row-builder";
 import { parseYamlFallback } from "./yaml-fallback";
 
@@ -29,6 +32,12 @@ export interface ExtSourceHost {
   readMd(path: string): Promise<Record<string, unknown> | null>;
   /** 非 md 自研路径前置：cachedRead 原文；文件不存在（race）返回 null */
   readNonMdText(path: string): Promise<string | null>;
+  /**
+   * 正文读取（仅 SEARCH 查询使用，随行临时携带、不缓存不常驻）：
+   * 返回 cachedRead 原文与 md frontmatter 结束偏移（非 md / 无 frontmatter 为 null）；
+   * frontmatter 剥离与围栏剥离在 core（body.ts）按 ext 分派。文件不存在返回 null。
+   */
+  readBody(path: string): Promise<{ text: string; frontmatterEnd: number | null } | null>;
 }
 
 export interface ExtLoadResult {
@@ -48,6 +57,27 @@ export function failedListForRender(failed: string[], limit: number): { shown: s
   const capped = Number.isInteger(limit) && limit >= 1 ? limit : 1;
   const shown = failed.slice(0, capped);
   return { shown, count: shown.length };
+}
+
+/**
+ * 批量读取行 body（SEARCH 查询专用）：md 剥 frontmatter、非 md 剥围栏块（core/body.ts）。
+ * 读取失败的行不入表 → 求值按「无 body」处理（全部 SEARCH 字段 null，不 warning）。
+ *
+ * @param rows - 需要正文的行（FROM 命中行 + [ext] 并入行）
+ * @param host - 宿主正文能力
+ * @returns path → body（仅在成功读取时入表）
+ */
+export async function loadBodies(rows: DataRow[], host: ExtSourceHost): Promise<Map<string, string>> {
+  const bodies = new Map<string, string>();
+  for (const row of rows) {
+    const raw = await host.readBody(row.path);
+    if (raw === null) continue;
+    bodies.set(
+      row.path,
+      row.file.ext === "md" ? extractMdBody(raw.text, raw.frontmatterEnd) : stripFenceBlocks(raw.text),
+    );
+  }
+  return bodies;
 }
 
 /** 非 md 解析失败（级别 warn / error 随失败分级，本次同桶渲染） */

@@ -1,6 +1,6 @@
 /**
  * @module dsql/lexer
- * @description DSQL v2.0 分词器：**WORD** / %运算符% / 字符串 / 路径 / 裸标识符 / $变量$
+ * @description DSQL 分词器：**WORD** / %运算符% / 字符串 / 路径 / [ext] / 裸标识符 / $变量$
  *
  * 标记体系（按字面实现）：
  * - 关键词/内置函数：**WORD** 包裹（关键词约定全大写，函数约定小写）
@@ -10,7 +10,7 @@
  * - 裸标识符：字段名（支持 Unicode 与带点路径 file.name / this.状态）
  * - 裸字面量：true / false / null
  *
- * v2.0 视图关键词：TABLE_VIEW / LIST_VIEW / CARD_VIEW
+ * 视图关键词：TABLE_VIEW / LIST_VIEW / CARD_VIEW
  * （旧 TABLE / LIST 已废除，词法器不再收录，落到"未知关键词"分支抛 LexError）
  */
 
@@ -48,6 +48,7 @@ export class LexError extends Error {
 export const KEYWORDS = new Set([
   "SELECT", "FROM", "WHERE", "SORT", "BY", "AND", "OR", "NOT", "AS",
   "LIMIT", "ASC", "DESC", "TABLE_VIEW", "LIST_VIEW", "CARD_VIEW", "WITHOUT", "ID",
+  "SEARCH",
 ]);
 
 /** DSQL 1.4：聚合关键词（仅 SELECT 项合法，parser 单独拦截，不入 KEYWORDS 以免其他子句误吞） */
@@ -135,7 +136,11 @@ export class Lexer {
     }
   }
 
-  /** '字符串' 与 "路径"：支持 \' \" \\ 转义，不可跨行 */
+  /**
+   * '字符串' 与 "路径"：逐字符扫描，不可跨行。
+   * 转义规则（DSQL 2.2）：遇 \ 读下一字符——\' → 内容加 '；其余情况 \ 与下一字符
+   * 都原样入内容（\\ → 两个反斜杠，\d → \d）。未转义的 ' 终止字符串。
+   */
   private readString(quote: string, line: number, col: number): Token {
     this.pos++;
     this.col++;
@@ -145,12 +150,13 @@ export class Lexer {
       const ch = this.src[this.pos];
       if (ch === "\\") {
         const nxt = this.src[this.pos + 1];
-        if (nxt === quote || nxt === "\\") {
-          value += nxt;
+        if (nxt !== undefined && nxt !== "\n") {
+          value += nxt === quote ? quote : "\\" + nxt;
           this.pos += 2;
           this.col += 2;
           continue;
         }
+        // \ 后无字符或换行：\ 原样入内容，走正常流程（换行触发跨行错误 / EOF 触发未闭合）
       }
       if (ch === quote) {
         this.pos++;

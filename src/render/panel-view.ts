@@ -3,7 +3,7 @@
  * @description 看板面板渲染：DSQL 编辑 + 查询执行 + 三视图结果区分派（纯 UI，只吃 PanelDeps）
  */
 
-import { collectExtFilters, executeQuery, type QueryDebug, type ResultSet } from "@dsql/executor";
+import { collectExtFilters, executeQuery, matchSource, type QueryDebug, type ResultSet } from "@dsql/executor";
 import { parseQuery, QueryParseError } from "@dsql/parser";
 import {
   IMPLEMENTED_VIEWS,
@@ -13,7 +13,7 @@ import {
   type ViewType,
 } from "@dsql/types";
 import type { PanelDeps } from "@host/types";
-import { failedListForRender, loadExtRows } from "@index/ext-source";
+import { failedListForRender, loadBodies, loadExtRows } from "@index/ext-source";
 import { renderCardView } from "@render/card-view";
 import { renderListView } from "@render/list-view";
 import { renderTableView } from "@render/table-view";
@@ -257,11 +257,21 @@ export function createPanelController(
         extRows = loaded.rows;
         failedFiles = loaded.failed;
       }
+      // SEARCH 正文预读：仅查询含 SEARCH 时按 FROM 命中范围（含 [ext] 并入行）读 body，
+      // 随行临时携带、不缓存；无 SEARCH → 零 body 读取
+      const parsed = query;
+      let bodies: Map<string, string> | undefined;
+      if (parsed.search !== null) {
+        const mdRows = deps.rows.all().filter((row) => matchSource(parsed.from, row));
+        bodies = await loadBodies([...mdRows, ...extRows], deps.extSource);
+        if (runId !== resultRun) return;
+      }
       result = executeQuery(query, deps.rows.all(), null, {
         debug: deps.settings().showDebug,
         // DSQL 1.5：摄取期容错警告（如重复键剔除的文件）随调试信息输出
         ingestWarnings: deps.rows.ingestWarnings(),
         extRows,
+        bodies,
       });
     } catch (err) {
       error = err instanceof QueryParseError ? err.message : String((err as Error).message ?? err);
@@ -426,6 +436,13 @@ export function createPanelController(
     if (dbg.limit) entries.push({ op: "LIMIT", message: dbg.limit });
     for (const agg of dbg.aggregates ?? []) {
       entries.push({ op: "AGG", message: agg });
+    }
+    for (const stat of dbg.search ?? []) {
+      entries.push({
+        op: "SEARCH",
+        message: `${stat.alias}（/${stat.pattern}/）：命中 ${stat.hits}，未命中 ${stat.misses}` +
+          (stat.samples.length > 0 ? `，示例：${stat.samples.join("、")}` : ""),
+      });
     }
     for (const miss of dbg.fieldMisses) {
       entries.push({

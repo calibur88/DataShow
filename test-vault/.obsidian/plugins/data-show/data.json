@@ -333,9 +333,9 @@
     },
     {
       "id": "e8-ext-total",
-      "name": "TOTAL·不含非 md 行",
+      "name": "TOTAL·含 [ext] 全量行",
       "type": "ext示例",
-      "description": "TOTAL 恒基于 FROM 全量 md 命中行。预期：优先级合计 = 1（仅 md；app.txt=2、db.txt=3 不计入），单行汇总",
+      "description": "TOTAL 恒基于 FROM 全量命中行（含 [ext] 非 md 行，恒忽略 WHERE）：优先级合计 = md 1 + app.txt 2 + db.txt 3 = 6，单行汇总",
       "sql": "**SELECT** **TOTAL** priority **AS** $优先级合计$\n**FROM** \"示例/日志示例\"\n**WHERE** [txt]",
       "viewType": ""
     },
@@ -345,6 +345,62 @@
       "type": "ext示例",
       "description": "非 md 自研方言：history 同键收集为数组、steps 块式列表、flags 流式数组、retry 数字推断。预期：app.txt 一行五列齐全（md 行这些字段缺失显示 —）",
       "sql": "**SELECT** file.name **AS** 文件,\n  history **AS** 同键收集,\n  steps **AS** 块式列表,\n  flags **AS** 流式数组,\n  retry **AS** 数字推断\n**FROM** \"示例/日志示例\"\n**WHERE** [txt] **AND** status %==% '正常'",
+      "viewType": ""
+    },
+    {
+      "id": "sr1-search-extract",
+      "name": "语法·章节与标题抽取",
+      "type": "search示例",
+      "description": "SEARCH 从 md 正文抽字段（捕获组取 m[1]）。预期 4 行 md：斗破(一/名场面)、凡人(2/经典)、随笔(null/null)、追更清单(null/null)；无 [ext] → txt 不出现",
+      "sql": "**TABLE_VIEW** **SELECT**\n  章节号,\n  标题\n**FROM** \"示例/文章示例\"\n**SEARCH**\n  '第([一二三四五六七八九十百\\d]+)章' **AS** 章节号,\n  '\\[(.+?)\\]' **AS** 标题\n**SORT** file.name **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "sr2-search-sort-null",
+      "name": "求值·数值排序与 null 末尾",
+      "type": "search示例",
+      "description": "[txt, md] 全量行 + SORT 章节号 %+% 0 DESC：第3章(网文) → 第2章(凡人) → null 末尾稳定序（第一章 中文数字转不出数字）",
+      "sql": "**SELECT**\n  章节号\n**FROM** \"示例/文章示例\"\n**WHERE** [txt, md]\n**SEARCH**\n  '第([一二三四五六七八九十百\\d]+)章' **AS** 章节号\n**SORT** 章节号 %+% 0 **DESC**",
+      "viewType": ""
+    },
+    {
+      "id": "sr3-search-gn-fields",
+      "name": "GN 自定义字段（跨行正则）",
+      "type": "search示例",
+      "description": "【状态】/【字数】跨行抽取（规范示例 2 同构）。[txt, md] 全量行 + WHERE 状态 %==% '连载中' → 仅追更记录(txt) 1 行，字数 999；字数 %+% 0 数值排序",
+      "sql": "**SELECT**\n  状态,\n  字数\n**FROM** \"示例/文章示例\"\n**WHERE** [txt, md] **AND** 状态 %==% '连载中'\n**SEARCH**\n  '【状态】\\s*\\n\\s*(.+)' **AS** 状态,\n  '【字数】\\s*\\n\\s*(\\d+)' **AS** 字数\n**SORT** 字数 %+% 0 **DESC**",
+      "viewType": ""
+    },
+    {
+      "id": "sr4-search-ext-synergy",
+      "name": "[ext]+SEARCH 协同与 null",
+      "type": "search示例",
+      "description": "[txt] 行级过滤后仅剩 txt 行（md 被排除）：网文(3/爽文)、追更记录(null/null)——GN 括号用【】与 [标题] 模板互不干扰",
+      "sql": "**SELECT**\n  章节号,\n  标题\n**FROM** \"示例/文章示例\"\n**WHERE** [txt]\n**SEARCH**\n  '第([一二三四五六七八九十百\\d]+)章' **AS** 章节号,\n  '\\[(.+?)\\]' **AS** 标题",
+      "viewType": ""
+    },
+    {
+      "id": "sr5-search-no-group",
+      "name": "求值·无捕获组取整体",
+      "type": "search示例",
+      "description": "'第\\d+章.*' 无捕获组 → 取整个匹配；'\\d+' 取首个数字。中文数字章节（第一章）\\d 匹配不上 → null，CJK 场景见 sr1 的字符类写法",
+      "sql": "**SELECT**\n  整章,\n  首个数字\n**FROM** \"示例/文章示例\"\n**WHERE** [txt, md]\n**SEARCH**\n  '第\\d+章.*' **AS** 整章,\n  '\\d+' **AS** 首个数字\n**SORT** file.name **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "sr6-search-total",
+      "name": "回归·TOTAL 口径不变",
+      "type": "search示例",
+      "description": "TOTAL 恒基于 FROM 全量命中行（含 [ext] 非 md 行）：总行数 = 6；显示行仅章节号非 null 的 3 行（一 / 2 / 3）",
+      "sql": "**SELECT**\n  **TOTAL** 1 **AS** $总行数$,\n  章节号\n**FROM** \"示例/文章示例\"\n**WHERE** [txt, md] **AND** 章节号 %!=% null\n**SEARCH**\n  '第([一二三四五六七八九十百\\d]+)章' **AS** 章节号",
+      "viewType": ""
+    },
+    {
+      "id": "sr7-total-denominator",
+      "name": "求值·TOTAL 全量分母与布尔算术",
+      "type": "search示例",
+      "description": "TOTAL 1 = 全部分母（含 [ext] txt，恒忽略 WHERE）；$文件总数$ 逐行引用，布尔 (类型 %!=% '记录') 经 Number() 转 0/1 参与减法：追更记录行 = 6，其余行（含类型缺失行按 null 同一性）= 5",
+      "sql": "**SELECT**\n  **TOTAL** 1 **AS** $文件总数$,\n  类型,\n  $文件总数$ %-% (类型 %!=% '记录') **AS** 非记录文件数\n**FROM** \"示例/文章示例\"\n**WHERE** [txt, md]\n**SORT** file.name **ASC**",
       "viewType": ""
     }
   ]

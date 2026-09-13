@@ -5,7 +5,7 @@
  */
 
 /**
- * DSQL v2.0 视图类型。
+ * DSQL 视图类型。
  * - TABLE_VIEW / LIST_VIEW / CARD_VIEW 三者平等，均可写入 SQL 并持久化
  * - 旧 TABLE / LIST 关键词在 v2.0 直接抛语法错误，不做兼容
  */

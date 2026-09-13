@@ -1,6 +1,6 @@
 /**
  * @module dsql/ast
- * @description DSQL v2.0 AST：表达式、数据源、排序子句与查询结构的类型定义
+ * @description DSQL AST：表达式、数据源、SEARCH 抽取项、排序子句与查询结构的类型定义
  */
 
 import type { ViewType } from "./types";
@@ -113,13 +113,32 @@ export interface SortClause {
 }
 
 export interface Query {
-  /** DSQL v2.0：TABLE_VIEW / LIST_VIEW / CARD_VIEW；缺省 TABLE_VIEW */
+  /** v2.0：TABLE_VIEW / LIST_VIEW / CARD_VIEW；缺省 TABLE_VIEW */
   view: ViewType;
   withoutId: boolean;
   /** "*" = 自动列（结果行字段并集） */
   select: ColumnSel[] | "*";
   from: Source;
+  /** v2.1：[ext] 后缀过滤（WHERE 原子，见 ExtFilterExpr） */
   where: Expr | null;
+  /** DSQL 2.2：SEARCH 正文抽取子句（前件 FROM；执行在 WHERE 之前） */
+  search: SearchItemNode[] | null;
   sort: SortClause | null;
   limit: number | null;
+}
+
+/**
+ * DSQL 2.2 SEARCH 抽取项：正则从行 body 抽内容挂成行字段（与 frontmatter / file.* 平级）。
+ * regex 在 parse 期编译一次、运行期复用；line / col 是别名的 token 位置
+ * （prepare 期与 frontmatter / file.* 冲突报错用）。
+ */
+export interface SearchItemNode {
+  /** 正则源（STRING 内容原样，转义规则见词法 §三） */
+  pattern: string;
+  /** parse 期编译产物（非法正则 / 未转义 \p{ 在 parse 期致命错误） */
+  regex: RegExp;
+  /** 裸标识符别名（挂到行字段的名） */
+  alias: string;
+  line: number;
+  col: number;
 }

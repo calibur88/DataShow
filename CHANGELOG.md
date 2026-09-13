@@ -3,7 +3,69 @@
 > 版本按迭代顺序倒序排列，每个版本条目固定分为「插件更新」与「DSQL 更新」两类；
 > 编写规范见 [CONTRIBUTING.md](CONTRIBUTING.md) §6。
 
-## [DSQL 2.1] - 2026-09-14（当前；语言版本升级，插件仍为 2.1.4）
+## [DSQL 2.2] - 2026-09-14（当前；语言版本升级，插件仍为 2.1.4）
+
+### 插件更新
+
+**SEARCH 正文抽取**：`**SEARCH**` 子句从每行 body 用正则抽取内容挂成行字段，与 frontmatter
+字段、`file.*` 平级，WHERE / SORT / LIMIT / SELECT 全部可用。SEARCH 是纯消费者——
+读取范围完全由 FROM 决定（纯标签源零 body 读取；禁止全库 body 扫描）。
+
+- 新增 `core/index/body.ts`：正文抽取纯函数——md 按 `frontmatterPosition.end.offset` 剥离
+  （去一个前导 `\n`；无 frontmatter → 全文）；非 md 剥掉全部 `---` 围栏行及其之间内容
+  （成对翻转、未闭合剥到 EOF、``` 围栏原样保留）；
+- `IExtSourceHost` 新增 `readBody`（cachedRead 原文 + md frontmatter 结束偏移）；
+  `core/index/ext-source` 新增 `loadBodies`（按 FROM 命中范围预读，随行临时携带、不缓存不常驻）；
+- 执行器新增 SEARCH 阶段（FROM → [ext] 并入 → 聚合遍 → **SEARCH** → WHERE），抽取字段
+  不写回行仓库（按行克隆 fields）；prepare 期冲突检查（frontmatter 字段并集 / `file.*`）；
+- 调试信息新增 `search` 字段：各模板命中数 / 未命中数 / 抽取示例 ≤3（调试页 SEARCH 行）；
+- 无 SEARCH 的查询零 body 读取，行为与现状完全一致（索引器零改动）。
+
+**§6.3 算术 / 比较 / 排序补丁**（随 SEARCH 引入的数值字符串语义，对全语言生效）：
+
+- 算术：null / empty 操作数 → null 不计 warning；非原始值（数组）→ null 计入 warnings
+  （禁止 `Number([5]) === 5` 式静默转换）；数字串隐式转数字（`"123" %+% 0 = 123`，
+  空串 / 全空白 / 非数值串视为转不出 → null + warning）；
+- 比较：同载数值比（`"007" %==% "7"` 为 true）、同不转字符串比（UTF-8 字节序）、
+  混合 → false；非原始值守卫在一切隐式转换之前（`[5] %==% "5"` 为 false）；
+- 排序：复用比较口径（数字串按数值序）；null / empty / 非原始值恒排末尾同侧稳定保序；
+  空串 `""` 按 UTF-8 序参与排序（排最前）。
+
+**TOTAL 口径修订（覆盖 DSQL 2.1）**：`[ext]` 行并入移到聚合遍之前。
+
+- `**TOTAL**` 恒基于 FROM 全量命中行——**含 `[ext]` 触发读取的非 md 行**（2.1 中仅统计
+  md 行仓库），「全量分母」口径下占比类计算可用；
+- 执行顺序随之定为：FROM 源解析 → [ext] 行并入 → 聚合遍 → SEARCH → WHERE → SORT →
+  LIMIT → SELECT；恒忽略 WHERE 的口径不变；SEARCH 抽取仍在聚合遍之后，TOTAL 不可见抽取字段。
+
+### DSQL 更新
+
+**DSQL 语言升级 v2.2：`**SEARCH**` 正文抽取子句**（前件 FROM，执行在 WHERE 之前）：
+
+- 语法：`**SEARCH** '正则' **AS** 裸标识符, ...`——子句而非函数（不进表达式、至多一次、
+  无括号形式）；出现在 WHERE / SELECT 表达式内 → 解析错误；需要 FROM 前件；
+- 求值：有捕获组取 `m[1]`（可选捕获组未匹配回落 `m[0]`），无捕获组取 `m[0]`；
+  exec 只取首个匹配；输出原始字符串不做类型推断；无匹配 / 无 body → **null**（不是 empty 值）；
+- 词法修订（STRING 全语言生效）：`\\` → **两个**反斜杠原样入内容（原为单个），
+  `\'` 仍转义为 `'`，其余 `\x` 原样保留；推论：内容结尾 `\` 个数必为偶数，奇数则字符串未闭合；
+- 正则：parse 期编译一次（非法 → 致命错误带行列号）；无 flags、大小写敏感、`.` 不跨行；
+  parse 期检测未转义 `\p{` / `\P{`（连续反斜杠奇数个）→ 致命错误（非 u 模式下静默退化为字面 p），
+  CJK 请用 `[一-鿿]`；
+- body：md 剥 frontmatter + 去一个前导 `\n`（无 frontmatter → 全文）；非 md 剥 `---` 围栏块；
+  末尾 `\n` 不规范化（`$` 严格匹配输入末尾，须容忍尾换行时自写 `\n?$`）；
+  `file.body` 不进字段表；匹配范围仅 body；
+- 冲突分两阶段：SEARCH 别名互同名 / 与 SELECT 别名同名 → parse 期；与 frontmatter 字段并集 /
+  `file.*` 冲突 → prepare 期（错误带 SEARCH 别名行列号）；
+- §6.3 比较语义修订为「同能转数字 → 数值比」：`"007" %==% "7"` 由 false 变 true，
+  `"" %==% 0` 由 true 变 false，`" " %==% ""` 口径同步变化——依赖旧字节精确匹配口径的
+  混合类型比较需复检；纯数字比 / 纯字符串（非数值串）比行为不变。**破坏性**
+
+- 测试：204 例（九套件：功能 22 / 数学 29 / DSQL语言 22 / store 4 / 摄取层 4 / ext后缀过滤 60 /
+  SEARCH 38 / viewSync 15 / normalizeBoard 10）全部通过；`npm run build` 通过。
+
+---
+
+## [DSQL 2.1] - 2026-09-14（语言版本升级，插件仍为 2.1.4）
 
 ### 插件更新
 

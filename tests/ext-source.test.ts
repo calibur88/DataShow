@@ -460,9 +460,9 @@ test("[范围] FROM 目录 AND 标签 → 目录触发读取，标签在行级�
   assert.ok(r.loaded.rows.some((row) => row.path === "logs/b.txt"));
 });
 
-test("[TOTAL] 含 [ext] 的查询中 TOTAL 不统计非 md 行", async () => {
+test("[TOTAL] 含 [ext] 的查询中 TOTAL 统计 [ext] 全量行（聚合遍在并入之后）", async () => {
   const r = await run('**SELECT** **TOTAL** n **AS** $总$, n **FROM** "logs" **WHERE** [txt]');
-  assert.equal(r.globals?.get("总"), 1); // 仅 md 行 n=1；b.txt 的 n=2 不计入
+  assert.equal(r.globals?.get("总"), 3); // md 行 n=1 + [ext] 并入的 b.txt n=2
 });
 
 test("[race] 文件在 listFiles 后消失 → 剔除并计数，不静默", async () => {

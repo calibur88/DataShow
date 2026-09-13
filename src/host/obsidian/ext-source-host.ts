@@ -55,4 +55,17 @@ export class ObsidianExtSourceHost implements IExtSourceHost {
     if (!file) return null;
     return this.app.vault.cachedRead(file);
   }
+
+  /** 正文读取（SEARCH 用）：cachedRead 原文 + md frontmatter 结束偏移（剥离在 core 做） */
+  async readBody(path: string): Promise<{ text: string; frontmatterEnd: number | null } | null> {
+    const file = this.app.vault.getFileByPath(path);
+    if (!file) return null;
+    const text = await this.app.vault.cachedRead(file);
+    let frontmatterEnd: number | null = null;
+    if (file.extension === "md") {
+      const pos = this.app.metadataCache.getFileCache(file)?.frontmatterPosition;
+      if (pos) frontmatterEnd = pos.end.offset;
+    }
+    return { text, frontmatterEnd };
+  }
 }

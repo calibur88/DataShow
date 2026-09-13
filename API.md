@@ -1,7 +1,7 @@
 # DataShow API 文档
 
 分两部分：**官方 API**（Obsidian 提供、本插件用到的接口）与**插件 API**（DataShow 自身导出、
-可供二次开发 / 测试使用的接口）。示例均基于当前版本（插件 2.1.4，DSQL 2.0，minAppVersion 1.4.4）。
+可供二次开发 / 测试使用的接口）。示例均基于当前版本（插件 2.1.4，DSQL 2.2，minAppVersion 1.4.4）。
 
 ---
 
@@ -62,7 +62,7 @@ import { executeQuery, evaluateExpr, compareUtf8 } from "./src/core/dsql/executo
 | 导出 | 签名 | 说明 |
 |---|---|---|
 | `parseQuery(source)` | `string → Query` | DSQL → AST；错误 `QueryParseError`（带 line / col） |
-| `executeQuery(q, rows, ctx, opts?)` | `→ ResultSet` | 执行：聚合遍 → FROM / WHERE / SORT / LIMIT / SELECT；`opts.debug` 收集调试信息，`opts.ingestWarnings` 并入摄取期警告 |
+| `executeQuery(q, rows, ctx, opts?)` | `→ ResultSet` | 执行：FROM 源解析 → [ext] 行并入 → 聚合遍（TOTAL）→ SEARCH 正文抽取 → WHERE / SORT / LIMIT / SELECT；`opts.debug` 收集调试信息，`opts.ingestWarnings` 并入摄取期警告，`opts.extRows` / `opts.bodies` 由面板按 FROM 范围预读后传入 |
 | `evaluateExpr(expr, row, ctx, track?, warn?, vars?)` | `→ FieldValue` | 单表达式求值（面板渲染单元格共用） |
 | `truthy(v)` | `FieldValue → boolean` | 裸真值判断（empty 值 / null / 0 / false / 空串 / 空数组 → 假） |
 | `compareUtf8(a, b)` | `(string, string) → number` | UTF-8 字节序比较（排序 / 自动列的确定性基准） |
@@ -144,7 +144,7 @@ findDuplicateKeys(content): { field: string; rawLines: string[] }[];
 | `IYamlCodec` | YAML 编解码 | `parse(text)` / `stringify(value)` |
 | `IStorageHost` | 带 key 的持久化槽位 | `load<T>(key)` / `save(key, data)` |
 | `IUiHost` | 用户反馈与日志 | `notify(msg)` / `warn(msg)` / `error(msg)` |
-| `IExtSourceHost` | [ext] 文件级读取（查询级，无常驻状态） | `listFiles(folderPaths)` / `readMd(path)` / `readNonMdText(path)` |
+| `IExtSourceHost` | [ext] 文件级读取 / SEARCH 正文读取（查询级，无常驻状态） | `listFiles(folderPaths)` / `readMd(path)` / `readNonMdText(path)` / `readBody(path)` |
 
 另有 `IRowSource`（`core/index/store.ts` 的只读数据视图，非宿主接口）：
 `all(): DataRow[]` / `ingestWarnings()` / `subscribe(cb)`，供 UI 层消费行仓库快照。

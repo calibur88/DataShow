@@ -1,11 +1,14 @@
 /**
  * @module dsql/executor
- * @description DSQL 执行器：按 FROM → WHERE → SORT → LIMIT → SELECT 管线执行查询
+ * @description DSQL 执行器：按 FROM → [ext] 行并入 → 聚合遍（TOTAL）→ SEARCH → WHERE → SORT → LIMIT → SELECT 管线执行查询
  *
- * 两遍执行模型：第一遍聚合遍（FROM 全量命中行，**忽略 WHERE**，计算 **TOTAL** → 变量表）；
- * 第二遍投影遍（WHERE → SORT → LIMIT → SELECT 投影，$变量$ 查变量表、裸标识符查行字段）。
- * 语义：类型不匹配/除零/缺字段为非致命（求值 null，计入 warnings）；排序 UTF-8 字节序确定性方案。
- * 视图关键词仅透传 ResultSet.view，不影响数据管线（v2.0：TABLE_VIEW / LIST_VIEW / CARD_VIEW）。
+ * 两遍执行模型：FROM 源解析后，[ext] 行按 path 去重并入（调用方按 FROM 范围预读），
+ * 第一遍聚合遍（FROM 全量命中行——含 [ext] 非 md 行，**忽略 WHERE**，计算 **TOTAL** → 变量表）；
+ * 第二遍投影遍（SEARCH 正文抽取 → WHERE → SORT → LIMIT → SELECT 投影，
+ * $变量$ 查变量表、裸标识符查行字段；SEARCH 抽取字段在聚合遍之后，TOTAL 不可见）。
+ * 语义：类型不匹配/除零/缺字段为非致命（求值 null，计入 warnings）；算术 / 比较做
+ * Number() 隐式转换（非原始值守卫在前，见 §6.3 补丁）；排序 UTF-8 字节序确定性方案。
+ * 视图关键词仅透传 ResultSet.view，不影响数据管线（TABLE_VIEW / LIST_VIEW / CARD_VIEW）。
  */
 
 import type { BinOp, Expr, Query, Source } from "./ast";
@@ -41,7 +44,19 @@ export interface QueryDebug {
   sourceStats: SourceStat[];
   /** DSQL 1.4：聚合遍结果（**TOTAL** 项，按 SELECT 顺序） */
   aggregates: string[];
+  /** DSQL 2.2：SEARCH 各模板命中统计（按 SEARCH 顺序） */
+  search: SearchStat[];
   executionTimeMs: number;
+}
+
+/** DSQL 2.2：单条 SEARCH 模板的命中统计（调试页） */
+export interface SearchStat {
+  alias: string;
+  pattern: string;
+  hits: number;
+  misses: number;
+  /** 抽取值示例（≤3） */
+  samples: string[];
 }
 
 export interface ResultSet {
@@ -66,6 +81,11 @@ export interface ExecuteOptions {
    * 按 path 去重并入候选行集；不传 = 查询无 [ext]，行为与现状完全一致。
    */
   extRows?: DataRow[];
+  /**
+   * DSQL 2.2：行 path → 正文（SEARCH 查询专用，调用方按 FROM 命中范围预读；
+   * md 已剥 frontmatter、非 md 已剥围栏）。缺条目的行按「无 body」求值（字段 null）。
+   */
+  bodies?: Map<string, string>;
 }
 
 /**
@@ -107,8 +127,23 @@ export function executeQuery(
 
   // ---- FROM（含逐源统计） ----
   let matched = rows.filter((row) => matchSource(q.from, row));
-  const sourceStats: SourceStat[] | null = enabled ? collectSourceStats(q.from, rows) : null;
-  const fromMsg = `输入 ${rows.length} 行 → 命中 ${matched.length} 行`;
+
+  // ---- [ext] 文件级行并入（聚合遍之前 → TOTAL 含非 md 行；WHERE 之前 → 行级过滤覆盖之） ----
+  let extMerged = 0;
+  if (opts.extRows && opts.extRows.length > 0) {
+    const seen = new Set(matched.map((row) => row.path));
+    for (const row of opts.extRows) {
+      if (!seen.has(row.path) && matchSource(q.from, row)) {
+        seen.add(row.path);
+        matched.push(row);
+        extMerged++;
+      }
+    }
+  }
+
+  const sourceStats: SourceStat[] | null = enabled ? collectSourceStats(q.from, matched) : null;
+  const fromMsg = `输入 ${rows.length} 行 → 命中 ${matched.length} 行` +
+    (enabled && extMerged > 0 ? `（含 [ext] 并入 ${extMerged} 行）` : "");
 
   // ---- 别名唯一性行字段冲突校验（DSQL 1.5：聚合遍开始前，不限是否含 TOTAL 项） ----
   // 判定范围 = FROM 全量命中行的字段名并集，任一行出现过该字段名即冲突 → 致命错误
@@ -156,14 +191,49 @@ export function executeQuery(
     }
   }
 
-  // ---- [ext] 文件级行并入（聚合遍之后 → TOTAL 不含非 md 行；WHERE 之前 → 行级过滤覆盖之） ----
-  if (opts.extRows && opts.extRows.length > 0) {
-    const seen = new Set(matched.map((row) => row.path));
-    for (const row of opts.extRows) {
-      if (!seen.has(row.path) && matchSource(q.from, row)) {
-        seen.add(row.path);
-        matched.push(row);
+  // ---- SEARCH（DSQL 2.2：正文抽取，在 WHERE 之前——字段先抽出来 WHERE / SORT 才能用） ----
+  const searchStats: SearchStat[] | null =
+    q.search && q.search.length > 0
+      ? q.search.map((item) => ({ alias: item.alias, pattern: item.pattern, hits: 0, misses: 0, samples: [] }))
+      : null;
+  let searchMsg: string | null = null;
+  if (q.search && q.search.length > 0) {
+    // prepare 期冲突（FROM 元数据收集后、抽取前）：frontmatter 字段名并集 + file.* 内置字段。
+    // 行列号在 parse 期记录进 AST（SELECT / SEARCH 别名冲突才是 parse 期）。
+    const fieldNames = new Set<string>();
+    for (const row of matched) for (const k of Object.keys(row.fields)) fieldNames.add(k);
+    for (const item of q.search) {
+      if (fieldNames.has(item.alias) || FILE_KEYS.has(item.alias) || item.alias.startsWith("file.")) {
+        throw new Error(
+          `[DSQL] 第 ${item.line} 行第 ${item.col} 列：SEARCH 别名 '${item.alias}' 与现有字段名冲突，请改用其他别名`,
+        );
       }
+    }
+    matched = matched.map((row) => {
+      const fields = { ...row.fields }; // 克隆：SEARCH 字段不写回行仓库
+      for (let i = 0; i < q.search!.length; i++) {
+        const item = q.search![i];
+        const body = opts.bodies?.get(row.path);
+        let value: FieldValue = null; // 无 body / 无匹配 → null（不是 empty 值，不是 ""）
+        if (body !== undefined) {
+          const m = item.regex.exec(body); // exec 天然只返回首个匹配
+          if (m !== null) {
+            value = m[1] !== undefined ? m[1] : m[0]; // 有捕获组取 m[1]，未匹配/无捕获组回落 m[0]
+            fields[item.alias] = value; // 原始字符串，逐字符保留，不做类型推断
+            searchStats![i].hits++;
+            if (searchStats![i].samples.length < 3) searchStats![i].samples.push(value);
+            continue;
+          }
+        }
+        fields[item.alias] = null;
+        searchStats![i].misses++;
+      }
+      return { ...row, fields };
+    });
+    if (enabled) {
+      const hits = searchStats!.reduce((sum, s) => sum + s.hits, 0);
+      const misses = searchStats!.reduce((sum, s) => sum + s.misses, 0);
+      searchMsg = `${q.search.length} 个模板 × ${matched.length} 行：命中 ${hits}，未命中 ${misses}`;
     }
   }
 
@@ -222,6 +292,7 @@ export function executeQuery(
       warnings,
       sourceStats: sourceStats ?? [],
       aggregates: aggMsgs,
+      search: searchStats ?? [],
       executionTimeMs: round1(now() - started),
     };
   }
@@ -234,6 +305,9 @@ const SYNTH_ROW: DataRow = {
   file: { path: "", name: "汇总", folder: "", ext: "md", size: 0, ctime: 0, mtime: 0, outlinks: [], inlinks: [] },
   fields: {},
 };
+
+/** file.* 内置字段名（SEARCH 别名 prepare 期冲突检查用） */
+const FILE_KEYS = new Set(["path", "name", "folder", "ext", "size", "ctime", "mtime", "outlinks", "inlinks"]);
 
 /* ---------- SELECT 列 ---------- */
 
@@ -351,9 +425,7 @@ function evalBinary(
     case "<":
     case ">=":
     case "<=": {
-      if (l == null || r == null) return false; // null 参与比较 → false
-      const c = compareValues(l, r);
-      return op === ">" ? c > 0 : op === "<" ? c < 0 : op === ">=" ? c >= 0 : c <= 0;
+      return compareOrdering(op, l, r);
     }
     case "||":
       return l == null || r == null ? null : `${stringValue(l)}${stringValue(r)}`;
@@ -363,22 +435,31 @@ function evalBinary(
     case "/":
     case "%":
     case "^": {
-      if (typeof l !== "number" || typeof r !== "number") {
+      // null / empty 守卫：结果 null，不计 warning（empty 已在上方 stripEmpty 归 null）
+      if (l == null || r == null) return null;
+      // 非原始值守卫（数组等）：禁止 Number([5]) === 5 式静默转换
+      if (Array.isArray(l) || Array.isArray(r)) {
+        warn?.(`算术运算 %${op}% 作用于非原始值（数组）`, "类型不匹配");
+        return null;
+      }
+      const ln = toNumber(l);
+      const rn = toNumber(r);
+      if (ln === null || rn === null) {
         warn?.(`算术运算 %${op}% 作用于非数字`, "类型不匹配");
-        return null; // 非致命
+        return null;
       }
       switch (op) {
-        case "+": return l + r;
-        case "-": return l - r;
-        case "*": return l * r;
+        case "+": return ln + rn;
+        case "-": return ln - rn;
+        case "*": return ln * rn;
         case "/":
-          if (r === 0) { warn?.("%/% 除零", "除零"); return null; }
-          return l / r;
+          if (rn === 0) { warn?.("%/% 除零", "除零"); return null; }
+          return ln / rn;
         case "%":
-          if (r === 0) { warn?.("%%% 取模零", "除零"); return null; }
-          return l % r;
+          if (rn === 0) { warn?.("%%% 取模零", "除零"); return null; }
+          return ln % rn;
         case "^": {
-          const p = Math.pow(l, r);
+          const p = Math.pow(ln, rn);
           if (!Number.isFinite(p)) { warn?.("%^% 结果非有限数（如负数开偶次方）", "类型不匹配"); return null; }
           return p;
         }
@@ -386,6 +467,55 @@ function evalBinary(
     }
   }
   return null;
+}
+
+/** 非原始值判定（数组；null / 原始类型为原始值）。 */
+function isNonPrimitive(v: FieldValue): boolean {
+  return Array.isArray(v);
+}
+
+/**
+ * §6.3 补丁（DSQL 2.2）：Number() 转换。空串 / 全空白 / 非数值串转不出 → null；
+ * 非有限数（NaN / ±Infinity）视为转不出。仅接受原始值（非原始值由调用方先行守卫）。
+ */
+function toNumber(v: FieldValue): number | null {
+  if (typeof v === "number") return v;
+  if (typeof v === "boolean") return v ? 1 : 0;
+  if (typeof v === "string") {
+    if (v.trim() === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+/**
+ * == / != ：null 参与 → 同一性（null == null 为 true，其余 false；!= 取反）；
+ * 非原始值 → false（守卫写在一切 Number() / 隐式字符串化之前，[5] %==% "5" 不因 toString 漏成 true）；
+ * 否则两边都能 Number() 转出有限数（空串 / 全空白视为转不出）→ 数值比；
+ * 两边都转不出 → 字符串比（UTF-8 字节序）；一边能转一边不能 → false。
+ */
+function looseEquals(l: FieldValue, r: FieldValue): boolean {
+  if (l == null || r == null) return l === r;
+  if (isNonPrimitive(l) || isNonPrimitive(r)) return false;
+  const ln = toNumber(l);
+  const rn = toNumber(r);
+  if (ln !== null && rn !== null) return ln === rn;
+  if (ln === null && rn === null) return compareUtf8(stringValue(l), stringValue(r)) === 0;
+  return false;
+}
+
+/** > < >= <= ：口径同 looseEquals（null / 非原始值 → false；同载数值比、同不转字符串比、混合 → false）。 */
+function compareOrdering(op: ">" | "<" | ">=" | "<=", l: FieldValue, r: FieldValue): boolean {
+  if (l == null || r == null) return false;
+  if (isNonPrimitive(l) || isNonPrimitive(r)) return false;
+  const ln = toNumber(l);
+  const rn = toNumber(r);
+  let c: number;
+  if (ln !== null && rn !== null) c = ln - rn;
+  else if (ln === null && rn === null) c = compareUtf8(stringValue(l), stringValue(r));
+  else return false;
+  return op === ">" ? c > 0 : op === "<" ? c < 0 : op === ">=" ? c >= 0 : c <= 0;
 }
 
 function stringValue(v: FieldValue): string {
@@ -435,22 +565,6 @@ export function truthy(v: FieldValue): boolean {
     v != null && v !== EMPTY && v !== 0 && v !== false &&
     !(Array.isArray(v) && v.length === 0) && v !== ""
   );
-}
-
-/**
- * == / != ：null 参与 → false（!= 为其取反，即 null 与非 null 比较为 true）；
- * 数字按数值；其余 UTF-8 字节精确匹配（区分大小写）；null == null → true（同一性）。
- */
-function looseEquals(l: FieldValue, r: FieldValue): boolean {
-  if (l == null || r == null) return l === r;
-  if (typeof l === "number" && typeof r === "number") return l === r;
-  return compareUtf8(stringValue(l), stringValue(r)) === 0;
-}
-
-function compareValues(l: FieldValue, r: FieldValue): number {
-  if (typeof l === "number" && typeof r === "number") return l - r;
-  if (typeof l === "boolean" && typeof r === "boolean") return Number(l) - Number(r);
-  return compareUtf8(stringValue(l), stringValue(r));
 }
 
 const utf8Encoder = new TextEncoder();
@@ -557,7 +671,10 @@ export function matchFolder(source: Source, folder: string): boolean {
 
 /* ---------- FROM ---------- */
 
-function matchSource(source: Source, row: DataRow): boolean {
+/**
+ * FROM 匹配判定（导出供调用方在 SEARCH body 预读时圈定 FROM 命中范围）。
+ */
+export function matchSource(source: Source, row: DataRow): boolean {
   switch (source.kind) {
     case "folder": {
       const p = source.path.toLowerCase();
@@ -641,11 +758,12 @@ function buildRank(order: FieldValue[] | null): RankMap {
 }
 
 function compareKey(l: FieldValue, r: FieldValue, rank: RankMap, sign: 1 | -1): number {
-  const lNull = l == null;
-  const rNull = r == null;
-  if (lNull || rNull) {
-    if (lNull && rNull) return 0;
-    return lNull ? 1 : -1; // null 恒最后，不随方向反转
+  // null / empty / 非原始值恒排末尾（不随方向反转）；同侧按稳定序保留原相对顺序
+  const lLast = l == null || isNonPrimitive(l);
+  const rLast = r == null || isNonPrimitive(r);
+  if (lLast || rLast) {
+    if (lLast && rLast) return 0;
+    return lLast ? 1 : -1;
   }
   if (rank) {
     const li = rank.get(stringValue(l));
@@ -654,7 +772,12 @@ function compareKey(l: FieldValue, r: FieldValue, rank: RankMap, sign: 1 | -1): 
     if (li != null) return -1;
     if (ri != null) return 1;
   }
-  return sign * compareValues(l, r);
+  // 口径同 §6.3 比较：同载数值比、同不转字符串比（空串 "" 排最前）、混合稳定保序
+  const ln = toNumber(l);
+  const rn = toNumber(r);
+  if (ln !== null && rn !== null) return sign * (ln - rn);
+  if (ln === null && rn === null) return sign * compareUtf8(stringValue(l), stringValue(r));
+  return 0;
 }
 
 function describeSort(sort: NonNullable<Query["sort"]>): string {

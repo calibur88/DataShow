@@ -1,6 +1,6 @@
 # DataShow 整体架构
 
-> 本文是工程的权威架构说明。当前版本：插件 **2.1.4** · 语言 **DSQL 2.1** · minAppVersion **1.4.4**。
+> 本文是工程的权威架构说明。当前版本：插件 **2.1.4** · 语言 **DSQL 2.2** · minAppVersion **1.4.4**。
 
 ## 1. 项目定位
 
@@ -22,7 +22,7 @@ DataShow 是面向 Obsidian 的元数据看板插件：
 根目录/
 ├── src/                 插件源码（唯一入口 src/main.ts；按 host / core / controller /
 │                        render / views / settings / utils 分层，详见 §3）
-├── tests/               单元测试（八套件）
+├── tests/               单元测试（九套件）
 ├── scripts/test.mjs     测试运行器
 ├── docs/                DSQL 语言规范
 ├── dist/                构建产物（不入库）
@@ -75,7 +75,8 @@ main.ts                 装配：new 宿主适配器 → new 索引器 → regis
  │       ├─ row-builder.ts   IFileMeta + frontmatter → DataRow（摄取归一）
  │       ├─ frontmatter.ts   原文扫描：frontmatter 顶层重复键检测
  │       ├─ yaml-fallback.ts 自研 YAML 子集解析器（零依赖纯函数，只服务非 md 路径）
- │       └─ ext-source.ts    [ext] 文件级读取：FROM 目录收集 → 按后缀分派两条解析路径
+ │       ├─ body.ts          正文抽取纯函数（SEARCH 用）：md 剥 frontmatter、非 md 剥围栏块
+ │       └─ ext-source.ts    [ext] 文件级读取 + body 预读：FROM 目录收集 → 按后缀分派两条解析路径
  ├─ controller/
  │   └─ indexer.ts       索引器：订阅 IVaultHost → 构造行 → 写 DataStore（300ms 防抖）
  ├─ render/              纯 UI（只吃 Deps，零 obsidian import）
@@ -142,7 +143,7 @@ main ──► views ──► render ──► controller ──► core ──
 npm install
 npm run dev     # watch 模式：src / manifest.json / styles.css 变化即重建，并同步到两个测试库
 npm run build   # tsc 类型检查 + esbuild 生产构建 → dist/main.js
-npm test        # 单测八套件（零 Obsidian 依赖）
+npm test        # 单测九套件（零 Obsidian 依赖）
 ```
 
 - **构建流程**：`esbuild.config.mjs` 以 `src/main.ts` 为入口，产出 `dist/main.js`；
@@ -155,7 +156,7 @@ npm test        # 单测八套件（零 Obsidian 依赖）
   > 验证看板 SQL 不能直接用 `node` 跑 TS：`src/core/dsql/parser.ts` 用了参数属性
   > （`constructor(private tokens: Token[])`），node 的 strip-only 模式不支持，必须经 esbuild 打包。
 
-- **测试套件**（共 166 例）：
+- **测试套件**（共 204 例）：
 
 | 套件 | 领域 | 例数 |
 |---|---|---|
@@ -165,6 +166,7 @@ npm test        # 单测八套件（零 Obsidian 依赖）
 | `tests/store.test.ts` | 行仓库（增删改、订阅通知） | 4 |
 | `tests/ingest.test.ts` | 摄取层（重复键、摄取归一、摄取警告） | 4 |
 | `tests/ext-source.test.ts` | [ext] 后缀过滤（语法、三态、分派、范围、求值、自研解析器） | 60 |
+| `tests/search.test.ts` | SEARCH 正文抽取（语法、STRING 词法、正则、求值、冲突、body 来源、§6.3 补丁） | 38 |
 | `tests/viewSync.test.ts` | 视图与 SQL 双向同步 | 15 |
 | `tests/normalizeBoard.test.ts` | 看板字段校形 | 10 |
 
@@ -188,9 +190,10 @@ npm test        # 单测八套件（零 Obsidian 依赖）
 
 ## 6. 现状
 
-**已实现**（2.1.4 / DSQL 2.0）：DSQL 查询（表达式 / 函数 / 多级排序 / 自定义优先级 / 调试信息）、
+**已实现**（插件 2.1.4 / DSQL 2.2）：DSQL 查询（表达式 / 函数 / 多级排序 / 自定义优先级 / 调试信息）、
 TOTAL 全表聚合与 `$变量$` 派生体系、三种「无」语义分家（正常值 / 空容器 / 未赋值）、
-别名唯一性校验、frontmatter 重复键容错、表格 / 列表 / 卡片三视图、卡片视图内联编辑、
+别名唯一性校验、frontmatter 重复键容错、`[ext]` 后缀过滤与非 md 数据源（自研 YAML 解析）、
+SEARCH 正文抽取子句、表格 / 列表 / 卡片三视图、卡片视图内联编辑、
 视图切换与 SQL 双向同步、索引增量更新、host 依赖模式分层（宿主能力收敛于 `host/obsidian`，
 核心层零 Obsidian 依赖）。
 

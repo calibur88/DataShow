@@ -1,16 +1,16 @@
 /**
  * @module dsql/parser
- * @description DSQL v2.0 解析器（递归下降）：子句前件校验、SELECT 列表与表达式优先级
+ * @description DSQL 解析器（递归下降）：子句前件校验（含 SEARCH）、SELECT 列表与表达式优先级
  *
  * 子句按前件关系解析：各子句至多出现一次，书写顺序不限；
- * WHERE / SORT / LIMIT 以 **FROM** 为前件（必须在其之后），SELECT 可省略（默认全部字段）。
+ * WHERE / SEARCH / SORT / LIMIT 以 **FROM** 为前件（必须在其之后），SELECT 可省略（默认全部字段）。
  * 表达式优先级：OR < AND < NOT < 比较 < 连接 < 加减 < 乘除取模 < 乘方（右结合）< 一元。
  *
- * v2.0 view 产生式：（**TABLE_VIEW** | **LIST_VIEW** | **CARD_VIEW**）?（缺省 TABLE_VIEW）
+ * view 产生式：（**TABLE_VIEW** | **LIST_VIEW** | **CARD_VIEW**）?（缺省 TABLE_VIEW）
  * 旧 **TABLE** / **LIST** 已被词法器废除，落到"未知关键词"分支抛 LexError。
  */
 
-import type { BinOp, ColumnSel, Expr, Query, SortClause, SortKey, Source } from "./ast";
+import type { BinOp, ColumnSel, Expr, Query, SearchItemNode, SortClause, SortKey, Source } from "./ast";
 import { FUNCTIONS, Lexer, type Token } from "./lexer";
 import type { FieldValue, ViewType } from "./types";
 
@@ -19,6 +19,31 @@ function parseExts(raw: string): string[] {
   const trimmed = raw.trim();
   if (trimmed === "") return [];
   return raw.split(",").map((part) => part.trim());
+}
+
+/**
+ * SEARCH 正则编译（parse 期一次，运行期复用）。
+ * \p{ 检测：连续反斜杠个数为奇数且其后紧接 p{ / P{ → 未转义的 \p（非 u 模式下是
+ * identity escape，静默退化为字面 p，用户写的 CJK 断言永远匹配不上且不报错）→ 致命错误；
+ * 偶数个反斜杠后跟 p{ 是字面文本，不报错。
+ */
+function compileSearchRegex(raw: string): { regex: RegExp } | { error: string } {
+  let run = 0;
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] === "\\") {
+      run++;
+      continue;
+    }
+    if (run % 2 === 1 && (raw[i] === "p" || raw[i] === "P") && raw[i + 1] === "{") {
+      return { error: "SEARCH 正则不支持 \\p{…}（无 u flag），CJK 请用字符范围 [一-鿿]" };
+    }
+    run = 0;
+  }
+  try {
+    return { regex: new RegExp(raw) };
+  } catch (err) {
+    return { error: `SEARCH 正则非法：${err instanceof Error ? err.message : String(err)}` };
+  }
 }
 
 /** 查询解析错误：message 已格式化为「[DSQL] 第 x 行第 y 列：原因」。 */
@@ -73,6 +98,7 @@ class Parser {
     let select: ColumnSel[] | "*" = "*";
     let from: Source | null = null;
     let where: Expr | null = null;
+    let search: SearchItemNode[] | null = null;
     let sort: SortClause | null = null;
     let limit: number | null = null;
     const seen = new Set<string>();
@@ -87,6 +113,11 @@ class Parser {
         this.expectOnce(seen, "FROM");
         this.advance();
         from = this.parseSource();
+      } else if (this.isMarked("SEARCH")) {
+        this.expectOnce(seen, "SEARCH");
+        this.requirePrerequisite(seen, "SEARCH", "FROM");
+        this.advance();
+        search = this.parseSearchClause();
       } else if (this.isMarked("WHERE")) {
         this.expectOnce(seen, "WHERE");
         this.requirePrerequisite(seen, "WHERE", "FROM");
@@ -124,12 +155,70 @@ class Parser {
       throw this.err(tok, `缺少 **FROM** 子句（数据源），实际为 ${describe(tok)}`);
     }
 
-    const trailing = this.peek();
-    if (trailing.type !== "eof") {
-      throw this.err(trailing, `多余的查询子句「${describe(trailing)}」（子句：SELECT / FROM / WHERE / SORT / LIMIT / WITHOUT ID，每条至多一次）`);
+    // SEARCH 别名 vs SELECT 别名（含派生变量）：parse 期静态可判定，无论子句书写顺序
+    if (search !== null) {
+      for (const item of search) {
+        if (this.aliasTokens.has(item.alias)) {
+          throw this.err(
+            this.searchAliasTokens.get(item.alias) ?? this.tokens[0],
+            `SEARCH 别名 '${item.alias}' 与 SELECT 别名冲突，请改用其他别名`,
+          );
+        }
+      }
     }
 
-    return { view, withoutId: seen.has("WITHOUT ID"), select, from, where, sort, limit };
+    const trailing = this.peek();
+    if (trailing.type !== "eof") {
+      throw this.err(trailing, `多余的查询子句「${describe(trailing)}」（子句：SELECT / FROM / WHERE / SEARCH / SORT / LIMIT / WITHOUT ID，每条至多一次）`);
+    }
+
+    return { view, withoutId: seen.has("WITHOUT ID"), select, from, where, search, sort, limit };
+  }
+
+  /* ---------- SEARCH（DSQL 2.2 正文抽取） ---------- */
+
+  /** SEARCH 别名 → 别名 token（parse 期冲突错误定位用） */
+  private searchAliasTokens = new Map<string, Token>();
+
+  /**
+   * search_clause = SEARCH , search_item , { "," , search_item } ;
+   * search_item   = STRING , **AS** , ident（裸标识符，不接受 $变量$）；
+   * 正则 parse 期编译一次（非法 / 未转义 \p{ 致命错误），运行期复用。
+   */
+  private parseSearchClause(): SearchItemNode[] {
+    const items: SearchItemNode[] = [];
+    do {
+      const strTok = this.peek();
+      if (strTok.type !== "string") {
+        throw this.err(strTok, `SEARCH 模板应为单引号字符串（正则），实际为 ${describe(strTok)}`);
+      }
+      this.advance();
+      if (!this.matchKw("AS")) {
+        throw this.err(this.peek(), `SEARCH 模板后应为 **AS** 别名，实际为 ${describe(this.peek())}`);
+      }
+      const aliasTok = this.peek();
+      if (aliasTok.type === "variable") {
+        throw this.err(aliasTok, `SEARCH 别名应为裸标识符，不接受 $变量$（$${aliasTok.value}$）`);
+      }
+      if (aliasTok.type !== "ident") {
+        throw this.err(aliasTok, `SEARCH 别名应为裸标识符，实际为 ${describe(aliasTok)}`);
+      }
+      this.advance();
+      if (this.searchAliasTokens.has(aliasTok.value)) {
+        throw this.err(aliasTok, `SEARCH 别名 '${aliasTok.value}' 重复（SEARCH 内别名互不相同）`);
+      }
+      this.searchAliasTokens.set(aliasTok.value, aliasTok);
+      const compiled = compileSearchRegex(strTok.value);
+      if ("error" in compiled) throw this.err(strTok, compiled.error);
+      items.push({
+        pattern: strTok.value,
+        regex: compiled.regex,
+        alias: aliasTok.value,
+        line: aliasTok.line,
+        col: aliasTok.col,
+      });
+    } while (this.matchPunct(","));
+    return items;
   }
 
   /** 子句重复出现报错 */

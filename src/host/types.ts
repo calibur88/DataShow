@@ -86,7 +86,7 @@ export interface IOpener {
 
 /**
  * [ext] 文件级读取能力（查询级使用）。
- * 仅在查询含 [ext] 时被调用；非 md 不缓存、不常驻、不监听、不进索引器。
+ * 仅在查询含 [ext] / SEARCH 时被调用；非 md 不缓存、不常驻、不监听、不进索引器。
  */
 export interface IExtSourceHost {
   /** 列出目录集合（含子目录）下的全部文件（md + 非 md），不做后缀过滤——后缀过滤在分派阶段做 */
@@ -95,6 +95,13 @@ export interface IExtSourceHost {
   readMd(path: string): Promise<Record<string, unknown> | null>;
   /** 非 md 自研路径前置：cachedRead 原文；文件不存在（race）返回 null */
   readNonMdText(path: string): Promise<string | null>;
+  /**
+   * 正文读取（仅 SEARCH 查询使用，随行临时携带、不缓存不常驻）：
+   * cachedRead 原文 + md 的 metadataCache frontmatter 结束偏移
+   * （非 md / 无 frontmatter 为 null）；剥离逻辑在 core（index/body）按 ext 分派。
+   * 文件不存在返回 null。
+   */
+  readBody(path: string): Promise<{ text: string; frontmatterEnd: number | null } | null>;
 }
 
 /** YAML 编解码契约。宿主提供实现，core 只认本接口 */
