@@ -183,10 +183,17 @@ test("别名与行字段名冲突 → 致命报错（执行期校验）", () => 
   );
 });
 
-test("TOTAL **AS** 强制 $槽位$（DSQL 2.3：裸名写法 → 致命）", () => {
-  const a = parseQuery(`**SELECT** $总人数$, **TOTAL** 1 **AS** $总人数$ **FROM** "M"`);
-  assert.deepEqual((a.select as ColumnSel[])[0].slot, true); // 裸槽位声明
-  assert.deepEqual((a.select as ColumnSel[])[1].alias, "总人数"); // TOTAL 填充同名槽位
+test("TOTAL **AS** 强制 $槽位$；自声明与裸槽位同名 → 重复声明（DSQL 2.3）", () => {
+  const a = parseQuery(`**SELECT** **TOTAL** 1 **AS** $总人数$ **FROM** "M"`);
+  assert.deepEqual((a.select as ColumnSel[])[0].alias, "总人数"); // TOTAL 自声明自投影
+  assert.throws(
+    () => parseQuery(`**SELECT** **TOTAL** 1 **AS** $总人数$, $总人数$ **FROM** "M"`),
+    /重复声明/,
+  );
+  assert.throws(
+    () => parseQuery(`**SELECT** $总人数$, **TOTAL** 1 **AS** $总人数$ **FROM** "M"`),
+    /重复声明/,
+  );
   assert.throws(
     () => parseQuery(`**SELECT** **TOTAL** 1 **AS** 总人数 **FROM** "M"`),
     /别名必须为槽位/,

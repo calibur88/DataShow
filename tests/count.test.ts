@@ -100,8 +100,8 @@ test("[槽位] 指向输出别名（expr AS $x$）→ 非槽位声明致命", ()
   parseErr("**SELECT** state %+% 1 **AS** $x$ **FROM** \"C\" **COUNT** state %==% '过载' **AS** $x$", /非槽位声明/);
 });
 
-test("[槽位] 同一槽位被 TOTAL 与 COUNT 双填充 → 已被填充", () => {
-  parseErr("**SELECT** $x$, **TOTAL** 1 **AS** $x$ **FROM** \"C\" **COUNT** state %==% '过载' **AS** $x$", /已被填充/);
+test("[槽位] 两条 COUNT 填充同一槽位 → 已被填充（TOTAL×COUNT 双填充由结构排除）", () => {
+  parseErr("**FROM** \"C\" **SELECT** $x$ **COUNT** state %==% '过载' **AS** $x$, due %!=% null **AS** $x$", /已被填充/);
 });
 
 test("[槽位] 裸槽位重复声明 → 致命", () => {

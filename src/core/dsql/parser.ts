@@ -196,6 +196,8 @@ class Parser {
 
   /** 聚合填充目标（TOTAL 自声明自填充；COUNT 须指向 SELECT 声明的裸槽位） */
   private fillTokens = new Map<string, Token>();
+  /** TOTAL 填充目标（自声明自投影；与裸槽位声明同名 → 重复声明） */
+  private totalFillTokens = new Map<string, Token>();
   /** COUNT 填充目标（严格校验子集：必须在 SELECT 声明裸槽位） */
   private countFillTokens = new Map<string, Token>();
   /** 裸 $x$ 槽位声明（SELECT 内；COUNT 填充的前提，未填充静默忽略） */
@@ -322,9 +324,11 @@ class Parser {
         const expr = this.parseExpr();
         let alias: string | null = null;
         if (this.matchKw("AS")) alias = this.parseAlias();
-        // 裸 $x$ 槽位声明（expr 为变量引用且无别名）：由 TOTAL / COUNT 填充
+        // 裸 $x$ 槽位声明（expr 为变量引用且无别名）：由 COUNT 填充；
+        // 与 TOTAL 填充名同名 → 重复声明（TOTAL 自声明自投影，裸槽位冗余且致命）
         if (alias === null && expr.kind === "variable") {
-          if (this.slotTokens.has(expr.name) || this.varAliasTokens.has(expr.name)) {
+          if (this.slotTokens.has(expr.name) || this.varAliasTokens.has(expr.name) ||
+              this.totalFillTokens.has(expr.name)) {
             throw this.err(itemTok, `槽位 $${expr.name}$ 重复声明`);
           }
           this.slotTokens.set(expr.name, itemTok);
@@ -374,10 +378,17 @@ class Parser {
       throw this.err(t, "**TOTAL** 别名必须为槽位（$变量$，在 **SELECT** 中声明）");
     }
     this.advance();
+    if (this.varAliasTokens.has(t.value)) {
+      throw this.err(t, `$${t.value}$ 非槽位声明，不可被聚合填充`);
+    }
+    if (this.slotTokens.has(t.value)) {
+      throw this.err(t, `槽位 $${t.value}$ 重复声明`);
+    }
     if (this.fillTokens.has(t.value)) {
       throw this.err(t, `槽位 $${t.value}$ 已被填充`);
     }
     this.fillTokens.set(t.value, t);
+    this.totalFillTokens.set(t.value, t);
     return { expr, alias: t.value, total: true };
   }
 

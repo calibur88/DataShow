@@ -338,8 +338,7 @@ function resolveColumns(select: Query["select"], rows: DataRow[], globals: Map<s
     for (const row of rows) for (const k of Object.keys(row.fields)) keys.add(k);
     return [...keys].sort(compareUtf8).map((field) => ({ alias: field, expr: { kind: "field", path: field } as Expr }));
   }
-  // TOTAL 项自声明自投影（只读，从变量表取值）；同名的裸槽位不再重复投影
-  const totalAliases = new Set(select.filter((s) => s.total).map((s) => s.alias ?? ""));
+  // TOTAL 项自声明自投影（只读，从变量表取值）；裸槽位与 TOTAL 同名为 parse 期致命，此处无需去重
   const cols: ResultSet["columns"] = [];
   for (let i = 0; i < select.length; i++) {
     const sel = select[i];
@@ -348,9 +347,9 @@ function resolveColumns(select: Query["select"], rows: DataRow[], globals: Map<s
       continue;
     }
     if (sel.slot) {
-      // 裸槽位：被 TOTAL 项投影或未填充 → 静默忽略；由 COUNT 填充 → 常量列（只读）
+      // 裸槽位：由 COUNT 填充 → 常量列（只读）；未填充 → 静默忽略
       const name = sel.expr.kind === "variable" ? sel.expr.name : "";
-      if (!totalAliases.has(name) && globals?.has(name)) {
+      if (globals?.has(name)) {
         cols.push({ alias: name, expr: sel.expr, total: true });
       }
       continue;
