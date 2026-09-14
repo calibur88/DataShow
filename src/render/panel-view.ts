@@ -15,6 +15,7 @@ import {
 import type { PanelDeps } from "@host/types";
 import { failedListForRender, loadBodies, loadExtRows } from "@index/ext-source";
 import { renderCardView } from "@render/card-view";
+import { buildExport, filterRows, resolveExportPath, rowSearchText } from "@render/export";
 import { renderListView } from "@render/list-view";
 import { renderTableView } from "@render/table-view";
 import type { BoardDef } from "@settings/schema";
@@ -55,10 +56,15 @@ export function createPanelController(
   let saveTimer: number | null = null;
   let viewSelect: HTMLSelectElement | null = null;
   let searchInput: HTMLInputElement | null = null;
-  let searchBtn: HTMLButtonElement | null = null;
-  let clearBtn: HTMLButtonElement | null = null;
-  /** 卡片视图搜索词（会话内临时状态，不持久化到 data.json） */
+  let exportInput: HTMLInputElement | null = null;
+  /** 搜索词（会话内临时状态，不持久化到 data.json；三视图通用） */
   let searchTerm = "";
+  /** 导出路径（会话内临时状态，不持久化到 data.json） */
+  let exportPath = "";
+  /** 最近一次成功执行的结果集：搜索过滤与导出的数据来源 */
+  let lastResult: ResultSet | null = null;
+  /** 最近一次渲染是否隐藏「文件」列（导出列结构与之一致） */
+  let lastWithoutId = false;
   /** 当前结果区标签页（每次重跑回到「查询结果」） */
   let resultTab: "result" | "debug" = "result";
   /** 结果区请求序号：[ext] 异步读取期间的竞态守卫（只渲染最新一次） */
@@ -149,14 +155,14 @@ export function createPanelController(
       scheduleSave();
     });
 
-    // ---- 工具条：左（搜索组） + 右（刷新 + 视图模式） ----
+    // ---- 工具条：左（搜索组 + 导出组） + 右（刷新 + 视图模式） ----
     const toolbar = root.createDiv({ cls: "datashow-toolbar" });
 
-    // 搜索控件：输入框 + 搜索 + 清空（独立成组，窄屏整体换行到第二行）
+    // 搜索控件：输入框 + 搜索 + 清空（三视图通用；独立成组，窄屏整体换行到第二行）
     const searchGroup = toolbar.createDiv({ cls: "datashow-toolbar__search-group" });
     const input = searchGroup.createEl("input", {
       cls: "datashow-toolbar__search",
-      attr: { type: "text", placeholder: "🔍 搜索卡片..." },
+      attr: { type: "text", placeholder: "🔍 搜索..." },
     }) as HTMLInputElement;
     input.value = searchTerm;
     input.addEventListener("keydown", (e) => {
@@ -165,13 +171,34 @@ export function createPanelController(
         applySearch();
       }
     });
-    const doSearchBtn = searchGroup.createEl("button", { cls: "datashow-toolbar__btn", text: "搜索" });
-    doSearchBtn.addEventListener("click", () => applySearch());
-    const doClearBtn = searchGroup.createEl("button", { cls: "datashow-toolbar__btn", text: "清空" });
-    doClearBtn.addEventListener("click", () => clearSearch());
+    searchGroup
+      .createEl("button", { cls: "datashow-toolbar__btn", text: "搜索" })
+      .addEventListener("click", () => applySearch());
+    searchGroup
+      .createEl("button", { cls: "datashow-toolbar__btn", text: "清空" })
+      .addEventListener("click", () => clearSearch());
     searchInput = input;
-    searchBtn = doSearchBtn;
-    clearBtn = doClearBtn;
+
+    // 导出控件：vault 相对路径 + 导出（按扩展名分派 json / csv；xlsx 明确不支持，见 render/export）
+    const exportGroup = toolbar.createDiv({ cls: "datashow-toolbar__export-group" });
+    const exportPathInput = exportGroup.createEl("input", {
+      cls: "datashow-toolbar__export",
+      attr: { type: "text", placeholder: "导出路径（vault 相对路径）" },
+    }) as HTMLInputElement;
+    exportPathInput.value = exportPath;
+    exportPathInput.addEventListener("input", () => {
+      exportPath = exportPathInput.value;
+    });
+    exportPathInput.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void doExport();
+      }
+    });
+    exportGroup
+      .createEl("button", { cls: "datashow-toolbar__btn", text: "导出" })
+      .addEventListener("click", () => void doExport());
+    exportInput = exportPathInput;
 
     toolbar.createDiv({ cls: "datashow-toolbar__spacer" });
     toolbar
@@ -232,6 +259,8 @@ export function createPanelController(
 
     const wrap = resultWrap;
     wrap.empty();
+    lastResult = null;
+    lastWithoutId = false;
 
     const sql = board.sql.trim();
     if (!sql) {
@@ -278,6 +307,12 @@ export function createPanelController(
       error = err instanceof QueryParseError ? err.message : String((err as Error).message ?? err);
     }
 
+    // 搜索过滤与导出的数据来源：仅在本次执行成功时刷新（失败时导出无内容）
+    if (!error && result) {
+      lastResult = result;
+      lastWithoutId = query?.withoutId ?? false;
+    }
+
     // 标签栏：查询结果 / 调试信息
     const hasDebug = !error && !!result?.debug;
     const tabs = wrap.createDiv({ cls: "datashow-tabs" });
@@ -302,8 +337,6 @@ export function createPanelController(
         board.viewType !== ""
           ? board.viewType
           : result?.view ?? detectTypeFromSql(sql) ?? "TABLE_VIEW";
-      // 搜索控件按视图联动启用/禁用（出错/0 行时也要同步，避免控件卡在上次状态）
-      syncSearchControls(view);
       if (error || !result || !query) {
         if (error) content.createDiv({ cls: "datashow-result__error", text: error });
         return;
@@ -312,8 +345,8 @@ export function createPanelController(
         content.createDiv({ cls: "datashow-result__empty", text: "查询结果为空（0 行）。" });
       } else {
         renderResultByView(content, view, query.withoutId, result);
-        // 仅卡片视图应用搜索过滤
-        if (view === "CARD_VIEW") applyFilter();
+        // 搜索过滤对三视图统一生效（渲染后套用，不改写行数据）
+        applyFilter();
       }
       // [ext] 解析失效文件渲染在结果区尾部（0 行时同样显示）
       if (failedFiles.length > 0) renderFailedFiles(content, failedFiles);
@@ -337,79 +370,105 @@ export function createPanelController(
     };
     const onSaveField = (row: DataRow, fieldPath: string, value: FieldValue): Promise<void> =>
       deps.frontmatter.setField(row.path, fieldPath, value);
+    // 行文本与导出过滤共用同一取值口径（文件标题 + 列名 + 显示值）
+    const searchText = (row: DataRow): string => rowSearchText(result, row, decimalPlaces);
 
     let viewEl: HTMLElement;
     if (view === "CARD_VIEW") {
-      viewEl = renderCardView({ result, decimalPlaces, onSaveField, onOpenFile });
+      viewEl = renderCardView({ result, decimalPlaces, onSaveField, onOpenFile, searchText });
     } else if (view === "LIST_VIEW") {
-      viewEl = renderListView({ result, decimalPlaces, onOpenFile });
+      viewEl = renderListView({ result, decimalPlaces, onOpenFile, searchText });
     } else {
-      viewEl = renderTableView({ result, withoutId, decimalPlaces, onOpenFile });
+      viewEl = renderTableView({ result, withoutId, decimalPlaces, onOpenFile, searchText });
     }
     wrap.appendChild(viewEl);
   }
 
-  /** 应用搜索：保留输入框当前值，重跑结果区以重新套用过滤。 */
+  /** 应用搜索：保留输入框当前值，仅重套 DOM 过滤（不重跑查询）。 */
   function applySearch(): void {
     if (!searchInput) return;
     searchTerm = searchInput.value;
-    void renderResult();
+    applyFilter();
   }
 
-  /** 清空搜索：清空输入框与搜索词，重跑结果区恢复全部卡片。 */
+  /** 清空搜索：清空输入框与搜索词，恢复全部行。 */
   function clearSearch(): void {
     searchTerm = "";
     if (searchInput) searchInput.value = "";
-    void renderResult();
+    applyFilter();
   }
 
   /**
-   * 卡片视图搜索过滤（DOM 后置过滤，不动 card-view）：
-   * 遍历 .datashow-card，按 textContent 不区分大小写子串匹配隐藏不匹配卡片；
-   * 搜索词非空且全部隐藏时显示「没有匹配的卡片」提示。
+   * 全视图搜索过滤（DOM 后置过滤，不改写行数据）：
+   * 遍历三种视图的行元素（表格 tr / 列表 li / 卡片 div），按行文本不区分大小写子串匹配；
+   * 行文本取自行元素的 data-search-text（与导出过滤同一口径）；
+   * 全部隐藏时显示「没有匹配的条目」；卡片视图额外隐藏没有可见卡片的列。
    */
   function applyFilter(): void {
     const container = resultWrap;
-    const kanban = container?.querySelector<HTMLElement>(".datashow-kanban");
-    if (!kanban) return;
+    if (!container) return;
 
-    // 清掉上一次搜索的空结果提示
-    kanban.parentElement?.querySelector(".datashow-search__empty")?.remove();
+    // 清掉上一次搜索留下的空结果提示
+    container.querySelector(".datashow-search__empty")?.remove();
 
     const term = searchTerm.trim().toLowerCase();
+    const nodes = container.querySelectorAll<HTMLElement>(".datashow-row");
     let visible = 0;
-    kanban.querySelectorAll<HTMLElement>(".datashow-card").forEach((card) => {
-      const text = (card.textContent ?? "").toLowerCase();
+    nodes.forEach((node) => {
+      const text = (node.dataset.searchText ?? node.textContent ?? "").toLowerCase();
       const hit = term === "" || text.includes(term);
-      card.style.display = hit ? "" : "none";
+      node.style.display = hit ? "" : "none";
       if (hit) visible++;
     });
 
-    if (term !== "" && visible === 0) {
+    // 卡片视图：列内卡片全部隐藏时整列隐藏（列头计数保持原值）
+    container.querySelectorAll<HTMLElement>(".datashow-kanban__column").forEach((column) => {
+      const cards = column.querySelectorAll<HTMLElement>(".datashow-card");
+      let anyVisible = false;
+      cards.forEach((card) => {
+        if (card.style.display !== "none") anyVisible = true;
+      });
+      column.style.display = anyVisible ? "" : "none";
+    });
+
+    if (term !== "" && nodes.length > 0 && visible === 0) {
       const empty = document.createElement("div");
       empty.className = "datashow-result__empty datashow-search__empty";
-      empty.textContent = "没有匹配的卡片";
-      (kanban.parentElement ?? container)?.appendChild(empty);
+      empty.textContent = "没有匹配的条目";
+      container.appendChild(empty);
     }
   }
 
   /**
-   * 搜索控件按视图联动：
-   * - 卡片视图：输入框/搜索/清空均启用
-   * - 表格/列表视图：禁用并清空搜索词（恢复全部数据）
+   * 导出当前结果：路径合法 → 按扩展名分派格式 → 写入 vault。
+   * 导出行为搜索过滤后的行集（搜索框为空则为全部行），与视图无关。
    */
-  function syncSearchControls(view: ViewType): void {
-    const isCard = view === "CARD_VIEW";
-    if (searchInput) {
-      searchInput.disabled = !isCard;
-      searchInput.classList.toggle("is-disabled", !isCard);
+  async function doExport(): Promise<void> {
+    if (!exportInput) return;
+    exportPath = exportInput.value;
+    if (!lastResult) {
+      deps.ui.notify("导出失败：当前没有可导出的查询结果");
+      return;
     }
-    if (searchBtn) searchBtn.disabled = !isCard;
-    if (clearBtn) clearBtn.disabled = !isCard;
-    if (!isCard) {
-      // 离开卡片视图 → 清空搜索词
-      searchTerm = "";
-      if (searchInput) searchInput.value = "";
+    const resolved = resolveExportPath(exportPath);
+    if (!resolved.ok) {
+      deps.ui.notify(`导出失败：${resolved.reason}`);
+      return;
+    }
+    const rows = filterRows(lastResult, searchTerm, deps.settings().decimalPlaces);
+    const payload = buildExport(
+      resolved.format,
+      lastResult,
+      rows,
+      lastWithoutId,
+      deps.settings().decimalPlaces,
+    );
+    try {
+      await deps.exporter.writeExport(resolved.path, payload.data);
+      deps.ui.notify(`已导出 ${rows.length} 行到 ${resolved.path}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      deps.ui.notify(`导出失败：${message}`);
     }
   }
 

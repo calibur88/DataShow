@@ -144,7 +144,7 @@ test("[求值] 复用 §6.3 比较口径：null 参与按同一性（缺失字�
 });
 
 test("[引用] COUNT 可消费 SEARCH 抽取字段", () => {
-  const q = parseQuery('**FROM** "C" **SEARCH** \'过载\' **AS** 标记 **SELECT** $命中$ **COUNT** 标记 %!=% null **AS** $命中$');
+  const q = parseQuery('**FROM** "C" **WHILE** [0, 1] **SEARCH** \'过载\' **AS** 标记 **SELECT** $命中$ **COUNT** 标记 %!=% null **AS** $命中$');
   const bodies = new Map([["C/a.md", "服务过载"], ["C/b.md", "正常"], ["C/c.md", "正常"]]);
   const r = executeQuery(q, ROWS, null, { bodies });
   assert.equal(globalsOf(r, "命中"), 1); // 仅 a 行 body 命中「过载」

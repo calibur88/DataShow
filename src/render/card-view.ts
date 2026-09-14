@@ -17,7 +17,8 @@
  */
 
 import { evaluateExpr, type ResultSet } from "@dsql/executor";
-import type { DataRow, FieldValue } from "@dsql/types";
+import { EMPTY, type DataRow, type FieldValue } from "@dsql/types";
+import { formatCell } from "@render/format";
 
 export interface CardViewArgs {
   result: ResultSet;
@@ -26,6 +27,8 @@ export interface CardViewArgs {
   onSaveField: (row: DataRow, fieldPath: string, value: FieldValue) => Promise<void>;
   /** 打开笔记回调（卡片标题/文件名点击） */
   onOpenFile: (row: DataRow) => void;
+  /** 行搜索文本回调：写入卡片元素 dataset，作为全视图搜索的匹配依据 */
+  searchText: (row: DataRow) => string;
 }
 
 /** 列头彩色圆点调色板（Kanban 常用色，按列循环取用） */
@@ -41,7 +44,7 @@ const COLUMN_COLORS = [
  * @returns 看板根元素
  */
 export function renderCardView(args: CardViewArgs): HTMLElement {
-  const { result, decimalPlaces, onSaveField, onOpenFile } = args;
+  const { result, decimalPlaces, onSaveField, onOpenFile, searchText } = args;
   const wrap = document.createElement("div");
   wrap.className = "datashow-kanban";
 
@@ -83,9 +86,11 @@ export function renderCardView(args: CardViewArgs): HTMLElement {
 
     const body = colEl.createDiv({ cls: "datashow-kanban__column-body" });
     for (const row of rows) {
-      body.appendChild(
-        buildCard(row, result.columns, groupCol, globals, decimalPlaces, onSaveField, onOpenFile),
+      const card = buildCard(
+        row, result.columns, groupCol, globals, decimalPlaces, onSaveField, onOpenFile,
       );
+      card.dataset.searchText = searchText(row);
+      body.appendChild(card);
     }
     colorIdx++;
   }
@@ -104,7 +109,8 @@ function buildCard(
   onOpenFile: (row: DataRow) => void,
 ): HTMLElement {
   const card = document.createElement("div");
-  card.className = "datashow-card";
+  // datashow-row 为三视图统一的行标记（全视图搜索过滤据此定位行元素）
+  card.className = "datashow-card datashow-row";
 
   // 每张卡片独立变量环境（全局 TOTAL + 本卡已计算的派生变量，链式派生不跨行泄漏）
   const vars = globals ? new Map(globals) : undefined;
@@ -215,7 +221,9 @@ function beginFieldEdit(
   const original = formatCell(prev, decimalPlaces);
   valueEl.empty();
   const input = valueEl.createEl("input", { cls: "datashow-card__field-input" });
-  input.value = prev == null ? "" : Array.isArray(prev) ? prev.join(", ") : String(prev);
+  // 预填当前值：null / empty 值（未赋值）→ 空输入框，不得写入 Symbol 内部形态（§6.3）
+  input.value =
+    prev == null || prev === EMPTY ? "" : Array.isArray(prev) ? prev.join(", ") : String(prev);
   input.focus();
   input.setSelectionRange(input.value.length, input.value.length);
 
@@ -261,15 +269,4 @@ function parseFieldInput(raw: string): FieldValue {
     return t.split(",").map((s) => parseFieldInput(s) as FieldValue);
   }
   return raw;
-}
-
-function formatCell(value: unknown, places = 4): string {
-  if (value == null) return "—";
-  if (Array.isArray(value)) return value.map((v) => formatCell(v, places)).join(", ");
-  if (typeof value === "boolean") return value ? "是" : "否";
-  if (typeof value === "number" && !Number.isInteger(value)) {
-    const p = Number.isInteger(places) && places >= 0 && places <= 100 ? places : 4;
-    return String(parseFloat(value.toFixed(p)));
-  }
-  return String(value);
 }

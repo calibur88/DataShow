@@ -6,7 +6,7 @@
  * - 关键词/内置函数：**WORD** 包裹（关键词约定全大写，函数约定小写）
  * - 运算符：%op% 包裹（%==% %!=% %>=% %<=% %>% %<% %||% %+% %-% %*% %/% %%% %^%）
  * - 路径："..."（双引号）；字符串：'...'（单引号）
- * - [ext] 后缀过滤：[...] 原样收集（仅 WHERE 表达式合法，parser 校验位置）
+ * - [...] 方括号原子：[...] 原样收集（WHERE 内为 [ext] 后缀过滤、**WHILE** 后为迭代边界，parser 按子句赋予语义）
  * - 裸标识符：字段名（支持 Unicode 与带点路径 file.name / this.状态）
  * - 裸字面量：true / false / null
  *
@@ -49,6 +49,7 @@ export const KEYWORDS = new Set([
   "SELECT", "FROM", "WHERE", "SORT", "BY", "AND", "OR", "NOT", "AS",
   "LIMIT", "ASC", "DESC", "TABLE_VIEW", "LIST_VIEW", "CARD_VIEW", "WITHOUT", "ID",
   "SEARCH",
+  "WHILE",
   "COUNT",
 ]);
 
@@ -118,6 +119,13 @@ export class Lexer {
     return this.readPunct(line, col);
   }
 
+  /**
+   * 跨过空白与 `--` 行注释。
+   * 换行语义只认 `\n`：孤立 `\r`（老式 Mac 行尾）在此按**普通空白**处理（col++），
+   * 与 readExtFilter 内部把 `\r` 当**换行**（line++）的口径不同——这是有意为之，
+   * 非疏漏：[...] 内已无换行结构（原文折成空格），行号必须按换行计才能与括号外对齐；
+   * 括号外则遵循「换行 = \n」的既有约定，CRLF 中 `\r` 仅占一列。
+   */
   private skipWsAndComments(): void {
     for (;;) {
       const ch = this.src[this.pos];
@@ -232,8 +240,11 @@ export class Lexer {
   }
 
   /**
-   * [ext] 后缀过滤：`[` 到配对 `]` 之间的内容原样收集（不做归一化），逗号切分与
-   * 空段处理由 parser 完成。未闭合（遇 EOF）为词法错误。
+   * `[` 到**首个** `]` 之间的内容原样收集（不做归一化），逗号切分与空段处理由 parser 完成。
+   * 词法层不区分 `[ext]` 与 `**WHILE**` 的 `[起始, 结束]`，语义由 parser 按所在子句赋予。
+   * 换行（LF / CRLF / CR）折为一个空格；未闭合（至 EOF 无 `]`）为词法错误。
+   * 注意：此处把 `\r` 当换行（line++），与外层 skipWsAndComments 把孤立 `\r` 当普通空白
+   * 的口径不同（见该处注释），同一字符两种语义是有意为之。
    */
   private readExtFilter(line: number, col: number): Token {
     this.pos++;
@@ -249,7 +260,9 @@ export class Lexer {
         this.col++;
         break;
       }
-      if (ch === "\n") {
+      if (ch === "\n" || ch === "\r") {
+        // CRLF / CR 视作单个换行：\r 后紧跟 \n 时一并跳过，避免行号双计
+        if (ch === "\r" && this.src[this.pos + 1] === "\n") this.pos++;
         this.line++;
         this.col = 1;
         value += " ";

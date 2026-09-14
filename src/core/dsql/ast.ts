@@ -94,15 +94,17 @@ export interface OpSource {
 export interface ColumnSel {
   expr: Expr;
   alias: string | null;
-  /** DSQL 1.4：**TOTAL** 全表聚合项（alias 强制，值进入变量表）；DSQL 2.3 起仅填充槽位、自身不投影 */
+  /** DSQL 1.4：**TOTAL** 全表聚合项（**AS** 强制 `$槽位$`，值进入变量表）；聚合项自声明自投影（§6.7） */
   total?: true;
+  /** DSQL 2.4：**AS** `$变量$` 输出别名（变量命名空间；与行字段池互不校验——两池隔离，§6.7） */
+  aliasVar?: true;
   /** DSQL 2.3：裸 $x$ 槽位声明项（expr 为 variable 且无别名）；由 TOTAL / COUNT 填充，未填充静默忽略 */
   slot?: true;
 }
 
 export interface SortKey {
   expr: Expr;
-  /** 键级方向；null = 用子句级方向 */
+  /** 键级方向；null = 默认 `**ASC**`（§6.4；方向写在末尾时归属最后一个键） */
   dir: "asc" | "desc" | null;
   /** 自定义优先级值列表（**SORT** 键 **BY** (...)），作用于本键 */
   priority: import("./types").FieldValue[] | null;
@@ -110,6 +112,22 @@ export interface SortKey {
 
 export interface SortClause {
   keys: SortKey[];
+}
+
+/**
+ * DSQL 2.4 WHILE 循环驱动子句：`**WHILE** [起始, 结束]`。
+ * 形态唯一（两个 NUMBER 字面量、方括号包裹、逗号分隔）；两边界须为非负整数且 起始 < 结束，
+ * 均由 parse 期静态校验（违反即 parse 期致命）；迭代次数 = 结束 - 起始。
+ * 无轮次变量：起始的绝对值不影响结果，只决定迭代次数。
+ */
+export interface WhileNode {
+  /** 起始边界（非负整数字面量，parse 期校验） */
+  start: number;
+  /** 结束边界（非负整数字面量，parse 期校验，须大于起始） */
+  end: number;
+  /** **WHILE** 关键字的 token 位置（解析期错误定位用） */
+  line: number;
+  col: number;
 }
 
 export interface Query {
@@ -121,8 +139,10 @@ export interface Query {
   from: Source;
   /** v2.1：[ext] 后缀过滤（WHERE 原子，见 ExtFilterExpr） */
   where: Expr | null;
-  /** DSQL 2.2：SEARCH 正文抽取子句（前件 FROM；执行在聚合遍之前） */
+  /** DSQL 2.2：SEARCH 正文抽取子句（DSQL 2.4 起前件为 WHILE；执行在聚合遍之前） */
   search: SearchItemNode[] | null;
+  /** DSQL 2.4：WHILE 循环驱动子句（前件 FROM；与 SEARCH 必须同时出现） */
+  while: WhileNode | null;
   /** DSQL 2.3：COUNT 分类计数子句（前件 FROM；执行在 WHERE 之后、SORT 之前） */
   count: CountItemNode[] | null;
   sort: SortClause | null;
@@ -144,6 +164,8 @@ export interface CountItemNode {
 
 /**
  * DSQL 2.2 SEARCH 抽取项：正则从行 body 抽内容挂成行字段（与 frontmatter / file.* 平级）。
+ * DSQL 2.4 起由 WHILE 驱动迭代：每轮迭代各模板游标推进一次，取第 k 个匹配
+ * （不足 → 补 null，不提前停）；起始匹配仍是首个匹配。
  * regex 在 parse 期编译一次、运行期复用；line / col 是别名的 token 位置
  * （prepare 期与 frontmatter / file.* 冲突报错用）。
  */

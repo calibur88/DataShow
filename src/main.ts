@@ -9,6 +9,7 @@
 import { Plugin, type WorkspaceLeaf } from "obsidian";
 import { VaultIndexer } from "@controller/indexer";
 import { ObsidianExtSourceHost } from "@host/obsidian/ext-source-host";
+import { ObsidianExportHost } from "@host/obsidian/export-host";
 import { ObsidianFrontmatterHost } from "@host/obsidian/frontmatter-host";
 import { ObsidianOpener } from "@host/obsidian/opener";
 import { ObsidianStorageHost } from "@host/obsidian/storage-host";
@@ -47,6 +48,7 @@ export default class DatashowPlugin extends Plugin {
     const codec = new ObsidianYamlCodec();
     const frontmatter = new ObsidianFrontmatterHost(this.app);
     const extSource = new ObsidianExtSourceHost(this.app);
+    const exporter = new ObsidianExportHost(this.app);
 
     // ---- 索引器：宿主事件 → 行仓库；UI 只订阅行仓库，不直连宿主 ----
     const indexer = new VaultIndexer(vaultHost, this.store, this.ui);
@@ -87,6 +89,7 @@ export default class DatashowPlugin extends Plugin {
               onRenamed: cb,
             }),
           extSource,
+          exporter,
           codec,
           opener,
           frontmatter,

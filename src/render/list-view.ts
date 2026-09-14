@@ -12,21 +12,24 @@
 
 import { evaluateExpr, type ResultSet } from "@dsql/executor";
 import type { DataRow } from "@dsql/types";
+import { formatCell } from "@render/format";
 
 export interface ListViewArgs {
   result: ResultSet;
   decimalPlaces: number;
   onOpenFile: (row: DataRow) => void;
+  /** 行搜索文本回调：写入行元素 dataset，作为全视图搜索的匹配依据 */
+  searchText: (row: DataRow) => string;
 }
 
 /**
  * 渲染列表视图。
  *
- * @param args - 视图参数（结果集、小数位、打开笔记回调）
+ * @param args - 视图参数（结果集、小数位、打开笔记回调、行搜索文本回调）
  * @returns 列表根元素
  */
 export function renderListView(args: ListViewArgs): HTMLElement {
-  const { result, decimalPlaces, onOpenFile } = args;
+  const { result, decimalPlaces, onOpenFile, searchText } = args;
   const wrap = document.createElement("div");
   wrap.className = "datashow-result__listwrap";
 
@@ -47,7 +50,9 @@ export function renderListView(args: ListViewArgs): HTMLElement {
   const list = wrap.createEl("ul", { cls: "datashow-result__list" });
   for (const row of result.rows) {
     const li = list.createEl("li");
-    li.classList.add("datashow-result__item");
+    // datashow-row 为三视图统一的行标记（全视图搜索过滤据此定位行元素）
+    li.classList.add("datashow-result__item", "datashow-row");
+    li.dataset.searchText = searchText(row);
     li.title = "点击打开笔记";
     li.addEventListener("click", () => onOpenFile(row));
 
@@ -72,15 +77,4 @@ export function renderListView(args: ListViewArgs): HTMLElement {
   }
   wrap.createDiv({ cls: "datashow-result__count", text: `${result.rows.length} 项` });
   return wrap;
-}
-
-function formatCell(value: unknown, places = 4): string {
-  if (value == null) return "—";
-  if (Array.isArray(value)) return value.map((v) => formatCell(v, places)).join(", ");
-  if (typeof value === "boolean") return value ? "是" : "否";
-  if (typeof value === "number" && !Number.isInteger(value)) {
-    const p = Number.isInteger(places) && places >= 0 && places <= 100 ? places : 4;
-    return String(parseFloat(value.toFixed(p)));
-  }
-  return String(value);
 }

@@ -3,10 +3,13 @@
  * @description DSQL 内置函数：sqrt/cbrt/root/contains/length/lower/upper/empty 的注册与调用
  */
 
+import { toNumber } from "./coerce";
 import { EMPTY, type FieldValue } from "./types";
 
 /**
  * 调用内置函数（args 为已求值的参数）。参数不合法一律返回 null（非致命，不抛错）。
+ * 数值族（sqrt / cbrt / root）按 §6.3 隐式转换取数——数字串 `"16"`、布尔与数字同等对待
+ * （与算术 `%+%` 族口径一致，区别于只认数值的一元正负号）。
  *
  * @param name - 函数名（词法层已标记的小写函数名）
  * @param args - 已求值的参数列表
@@ -20,21 +23,20 @@ export function callFunction(name: string, args: FieldValue[]): FieldValue {
 
 type Fn = (...args: FieldValue[]) => FieldValue;
 
-const num = (v: FieldValue): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const safe = (v: number): FieldValue => (Number.isFinite(v) ? v : null);
 
 const FUNCTIONS: Record<string, Fn> = {
   sqrt: (x) => {
-    const n = num(x);
+    const n = toNumber(x);
     return n == null || n < 0 ? null : safe(Math.sqrt(n));
   },
   cbrt: (x) => {
-    const n = num(x);
+    const n = toNumber(x);
     return n == null ? null : safe(Math.cbrt(n));
   },
   root: (x, nArg) => {
-    const v = num(x);
-    const n = num(nArg);
+    const v = toNumber(x);
+    const n = toNumber(nArg);
     if (v == null || n == null || n === 0) return null;
     if (v < 0 && Math.abs(n % 2) !== 1) return null; // 负数仅奇数次方根有意义
     return safe(v < 0 ? -Math.pow(-v, 1 / n) : Math.pow(v, 1 / n));

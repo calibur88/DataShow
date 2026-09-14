@@ -4,6 +4,38 @@
   font-size: 13px;
 }
 
+/* 侧栏搜索栏：占满侧栏顶部一行（输入框一行，搜索 / 清空一行） */
+.datashow-sidebar__search {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 2px 8px 8px;
+}
+
+.datashow-sidebar__search-input {
+  flex: 1 1 100%;
+  min-width: 0;
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+}
+
+.datashow-sidebar__search-input:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
+}
+
+.datashow-sidebar__btn {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 12px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
 .datashow-sidebar__empty {
   padding: 12px 8px;
   color: var(--text-muted);
@@ -196,6 +228,11 @@
   display: contents;
 }
 
+/* 导出控件分组：宽屏 display:contents 融入工具条 */
+.datashow-toolbar__export-group {
+  display: contents;
+}
+
 /* ===== 窄屏（手机 / 桌面窄分栏）：工具条两行布局 =====
    第一行（右对齐）：刷新 + 视图选择器，紧贴 DSQL 输入框下方；
    第二行（左对齐）：搜索组，占满整行；结果区随文档流自然下移。 */
@@ -235,7 +272,20 @@
     gap: 6px;
   }
 
+  /* 导出组：窄屏独占第三行 */
+  .datashow-toolbar__export-group {
+    display: flex;
+    order: 11;
+    flex: 0 0 100%;
+    gap: 6px;
+  }
+
   .datashow-toolbar__search {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .datashow-toolbar__export {
     flex: 1;
     min-width: 0;
   }
@@ -250,7 +300,7 @@
   font-size: 13px;
 }
 
-/* ===== 工具条搜索框（仅 CARD_VIEW 生效，表格/列表视图禁用） ===== */
+/* ===== 工具条搜索框（三视图通用：表格 / 列表 / 卡片） ===== */
 .datashow-toolbar__search {
   font-size: 13px;
   padding: 4px 8px;
@@ -266,15 +316,20 @@
   border-color: var(--interactive-accent);
 }
 
-.datashow-toolbar__search:disabled,
-.datashow-toolbar__btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  color: var(--text-faint);
+/* ===== 工具条导出路径输入框 ===== */
+.datashow-toolbar__export {
+  font-size: 13px;
+  padding: 4px 8px;
+  min-width: 160px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  color: var(--text-normal);
 }
 
-.datashow-toolbar__search:disabled {
-  background: var(--background-modifier-border);
+.datashow-toolbar__export:focus {
+  outline: none;
+  border-color: var(--interactive-accent);
 }
 
 /* 搜索空结果提示（复用 .datashow-result__empty 外观，加间距） */

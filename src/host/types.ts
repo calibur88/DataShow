@@ -128,6 +128,20 @@ export interface IStorageHost {
   save(key: string, data: unknown): Promise<void>;
 }
 
+/**
+ * 数据导出能力：把查询结果写入 vault 内路径。
+ * 路径由 `render/export` 的纯函数校验并规范化后传入（vault 相对路径，不含 ..）
+ */
+export interface IExportHost {
+  /**
+   * 写入导出文件：目录不存在时逐级创建，同名文件覆盖。
+   *
+   * @param path - vault 内相对路径（含扩展名）
+   * @param content - 导出文本（JSON / CSV 均为纯文本）
+   */
+  writeExport(path: string, content: string): Promise<void>;
+}
+
 /** 用户反馈与日志能力 */
 export interface IUiHost {
   /** 轻提示（宿主的通知条） */
@@ -166,6 +180,8 @@ export interface PanelDeps {
   onVaultChange(listener: () => void): () => void;
   /** [ext] 文件级读取能力（查询级，无常驻状态） */
   extSource: IExtSourceHost;
+  /** 导出写入能力（结果区导出按钮） */
+  exporter: IExportHost;
   /** YAML 编解码（失败文件列表渲染用 stringify） */
   codec: IYamlCodec;
   opener: IOpener;

@@ -35,7 +35,7 @@ export interface BoardDef extends Record<string, unknown> {
   sql: string;
   /**
    * 视图模式覆盖（v2.0 重命名自 viewOverride）。
-   * - "" = 跟随 SQL（缺省 TABLE_VIEW，详见 DSQL-EBNF.md）
+   * - "" = 跟随 SQL（缺省 TABLE_VIEW，详见 docs/DSQL-语言规范.md）
    * - "TABLE_VIEW" / "LIST_VIEW" / "CARD_VIEW" = 强制覆盖
    */
   viewType: ViewType | "";

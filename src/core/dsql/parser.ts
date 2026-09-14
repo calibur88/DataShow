@@ -1,17 +1,19 @@
 /**
  * @module dsql/parser
- * @description DSQL 解析器（递归下降）：子句前件校验（含 SEARCH）、SELECT 列表与表达式优先级
+ * @description DSQL 解析器（递归下降）：子句前件校验（含 WHILE / SEARCH）、SELECT 列表与表达式优先级
  *
  * 子句按前件关系解析：各子句至多出现一次，书写顺序不限；
- * WHERE / SEARCH / SORT / LIMIT 以 **FROM** 为前件（必须在其之后），SELECT 可省略（默认全部字段）。
+ * WHERE / COUNT / SORT / LIMIT / WHILE 以 **FROM** 为前件，**SEARCH** 以 **WHILE** 为前件
+ * （必须在其之后），SELECT 可省略（默认全部字段）。
+ * **WHILE** 与 **SEARCH** 必须同时出现：只写其一 → parse 期致命。
  * 表达式优先级：OR < AND < NOT < 比较 < 连接 < 加减 < 乘除取模 < 乘方（右结合）< 一元。
  *
  * view 产生式：（**TABLE_VIEW** | **LIST_VIEW** | **CARD_VIEW**）?（缺省 TABLE_VIEW）
  * 旧 **TABLE** / **LIST** 已被词法器废除，落到"未知关键词"分支抛 LexError。
  */
 
-import type { BinOp, ColumnSel, CountItemNode, Expr, Query, SearchItemNode, SortClause, SortKey, Source } from "./ast";
-import { FUNCTIONS, Lexer, type Token } from "./lexer";
+import type { BinOp, ColumnSel, CountItemNode, Expr, Query, SearchItemNode, SortClause, SortKey, Source, WhileNode } from "./ast";
+import { FUNCTIONS, LexError, Lexer, type Token } from "./lexer";
 import type { FieldValue, ViewType } from "./types";
 
 /** [ext] 内容 → 后缀列表：`[]` → 空数组（ALL 语义）；其余按逗号切、逐段 trim、去空段，原样保留不归一化 */
@@ -19,6 +21,24 @@ function parseExts(raw: string): string[] {
   const trimmed = raw.trim();
   if (trimmed === "") return [];
   return raw.split(",").map((part) => part.trim()).filter((part) => part !== "");
+}
+
+/**
+ * `[起始, 结束]` 内文本 → 两侧边界片段（WHILE 边界用）。
+ * 词法层把 `[` 到 `]` 之间的原文整体收进 extfilter token，故在此按**首个逗号**二次切分后
+ * 交给子解析器。边界只接受 NUMBER 字面量（无括号 / 引号 / 嵌套逗号），故不做深度与引号感知——
+ * 出现第二个逗号即「需两个边界」，多出的内容不进子解析器。
+ *
+ * @param raw - extfilter token 的原文（未归一化）
+ * @returns 两侧片段及其在 raw 中的起始下标（错误列号偏移用）；逗号数不为 1 时返回 null
+ */
+function splitWhileBounds(raw: string): { text: string; offset: number }[] | null {
+  const cut = raw.indexOf(",");
+  if (cut < 0 || raw.indexOf(",", cut + 1) >= 0) return null;
+  return [
+    { text: raw.slice(0, cut), offset: 0 },
+    { text: raw.slice(cut + 1), offset: cut + 1 },
+  ];
 }
 
 /**
@@ -48,12 +68,16 @@ function compileSearchRegex(raw: string): { regex: RegExp } | { error: string } 
 
 /** 查询解析错误：message 已格式化为「[DSQL] 第 x 行第 y 列：原因」。 */
 export class QueryParseError extends Error {
+  /** 未附加行列前缀的原始原因（片段子解析重定位错误时重组消息用） */
+  readonly reason: string;
+
   constructor(
     message: string,
     public line: number,
     public col: number,
   ) {
     super(`[DSQL] 第 ${line} 行第 ${col} 列：${message}`);
+    this.reason = message;
   }
 }
 
@@ -75,7 +99,11 @@ class Parser {
   /** 是否处于 WHERE 表达式内（[ext] 后缀过滤仅在此合法） */
   private inWhere = false;
   private variableTokens = new Map<string, Token>();
-  /** DSQL 1.5：AS 别名 → 首次定义的 token（重复定义校验用） */
+  /**
+   * AS 列标签 → 首次定义的 token（标签互不相同校验用）。
+   * 同时收录裸标识符标签与 `$变量$` 标签（两者都产出同名列）；行字段池校验只用前者
+   * （`$变量$` 别名是变量池名称，见 §6.7 两池隔离）。
+   */
   private aliasTokens = new Map<string, Token>();
   private totalToken: Token | null = null;
 
@@ -99,6 +127,8 @@ class Parser {
     let from: Source | null = null;
     let where: Expr | null = null;
     let search: SearchItemNode[] | null = null;
+    let whileNode: WhileNode | null = null;
+    let whileToken: Token | null = null;
     let count: CountItemNode[] | null = null;
     let sort: SortClause | null = null;
     let limit: number | null = null;
@@ -119,9 +149,15 @@ class Parser {
         this.requirePrerequisite(seen, "COUNT", "FROM");
         this.advance();
         count = this.parseCountClause();
+      } else if (this.isMarked("WHILE")) {
+        this.expectOnce(seen, "WHILE");
+        this.requirePrerequisite(seen, "WHILE", "FROM");
+        whileToken = this.peek();
+        this.advance();
+        whileNode = this.parseWhileClause(whileToken);
       } else if (this.isMarked("SEARCH")) {
         this.expectOnce(seen, "SEARCH");
-        this.requirePrerequisite(seen, "SEARCH", "FROM");
+        this.requirePrerequisite(seen, "SEARCH", "WHILE");
         this.advance();
         search = this.parseSearchClause();
       } else if (this.isMarked("WHERE")) {
@@ -164,13 +200,23 @@ class Parser {
       throw this.err(tok, `缺少 **FROM** 子句（数据源），实际为 ${describe(tok)}`);
     }
 
-    // SEARCH 别名 vs SELECT 别名（含派生变量）：parse 期静态可判定，无论子句书写顺序
+    // WHILE 与 SEARCH 必须同时出现：SEARCH 侧由前件校验拦截，此处拦 WHILE 侧
+    if (whileNode !== null && search === null) {
+      throw this.err(
+        whileToken ?? this.peek(),
+        "**WHILE** 需 **SEARCH** 配合（两者必须同时出现，只写其一为 parse 期致命错误）",
+      );
+    }
+
+    // SEARCH 别名（行字段池）vs SELECT 的裸标识符列标签（同行字段池）→ 同名即冲突；
+    // **AS** $变量$ 是变量池名称，与行字段池互不校验（两池隔离，§6.7）。
+    // parse 期静态可判定，无论子句书写顺序。
     if (search !== null) {
       for (const item of search) {
-        if (this.aliasTokens.has(item.alias)) {
+        if (this.aliasTokens.has(item.alias) && !this.varAliasTokens.has(item.alias)) {
           throw this.err(
             this.searchAliasTokens.get(item.alias) ?? this.tokens[0],
-            `SEARCH 别名 '${item.alias}' 与 SELECT 别名冲突，请改用其他别名`,
+            `SEARCH 别名 '${item.alias}' 与 SELECT 列标签冲突，请改用其他别名`,
           );
         }
       }
@@ -189,10 +235,10 @@ class Parser {
 
     const trailing = this.peek();
     if (trailing.type !== "eof") {
-      throw this.err(trailing, `多余的查询子句「${describe(trailing)}」（子句：SELECT / FROM / WHERE / SEARCH / COUNT / SORT / LIMIT / WITHOUT ID，每条至多一次）`);
+      throw this.err(trailing, `多余的查询子句「${describe(trailing)}」（子句：SELECT / FROM / WHERE / WHILE / SEARCH / COUNT / SORT / LIMIT / WITHOUT ID，每条至多一次）`);
     }
 
-    return { view, withoutId: seen.has("WITHOUT ID"), select, from, where, search, count, sort, limit };
+    return { view, withoutId: seen.has("WITHOUT ID"), select, from, where, search, while: whileNode, count, sort, limit };
   }
 
   /* ---------- COUNT（DSQL 2.3 分类计数） ---------- */
@@ -205,9 +251,8 @@ class Parser {
   private countFillTokens = new Map<string, Token>();
   /** 裸 $x$ 槽位声明（SELECT 内；COUNT 填充的前提，未填充静默忽略） */
   private slotTokens = new Map<string, Token>();
-  /** expr AS $x$ 输出别名（与槽位共用命名空间，不可被聚合填充） */
+  /** expr AS $x$ 输出别名（变量池：与槽位共用命名空间，不可被聚合填充） */
   private varAliasTokens = new Map<string, Token>();
-  private lastAliasWasVar = false;
 
   /**
    * count_clause = **COUNT** , count_item , { "," , count_item } ;
@@ -244,6 +289,73 @@ class Parser {
       items.push({ cmp: expr, slot: t.value, line: t.line, col: t.col });
     } while (this.matchPunct(","));
     return items;
+  }
+
+  /* ---------- WHILE（DSQL 2.4 循环驱动） ---------- */
+
+  /**
+   * while_clause = **WHILE** , "[" , NUMBER , "," , NUMBER , "]" ;
+   * 形态唯一（两个 NUMBER 字面量、方括号包裹、逗号分隔）；无嵌套 / 无 BY / 无方向词。
+   * 两边界须为非负整数且 起始 < 结束——均为 parse 期静态校验（违反即致命），
+   * 迭代次数 = 结束 - 起始 亦在 parse 期算出；字段 / 函数 / 算术等表达式不再是合法形态。
+   * 词法层把 `[` 到 `]` 的原文整体收进 extfilter token，故此处二次切分后逐段校验。
+   */
+  private parseWhileClause(kw: Token): WhileNode {
+    const bracket = this.peek();
+    if (bracket.type !== "extfilter") {
+      throw this.err(
+        bracket,
+        `**WHILE** 后应为 [起始, 结束]（方括号包裹两个非负整数字面量，如 [0, 3]），实际为 ${describe(bracket)}`,
+      );
+    }
+    this.advance();
+    const parts = splitWhileBounds(bracket.value);
+    if (parts === null) {
+      throw this.err(bracket, "**WHILE** 需两个边界（形如 [起始, 结束]，逗号分隔）");
+    }
+    const start = this.parseWhileBound(parts[0], bracket, "起始");
+    const end = this.parseWhileBound(parts[1], bracket, "结束");
+    if (start >= end) {
+      throw this.err(
+        bracket,
+        `**WHILE** 起始边界须小于结束边界（当前 [${start}, ${end}]，迭代次数须为正）`,
+      );
+    }
+    return { start, end, line: kw.line, col: kw.col };
+  }
+
+  /**
+   * WHILE 单侧边界：仅接受 NUMBER 字面量，且须为非负整数——
+   * 非 NUMBER（字段 / 函数 / 算术 / 字符串 / `$变量$` / null）与小数（NUMBER 允许小数）两处
+   * 报错文案区分，便于定位是哪一类越界；均 parse 期致命。
+   */
+  private parseWhileBound(part: { text: string; offset: number }, bracket: Token, which: "起始" | "结束"): number {
+    if (part.text.trim() === "") throw this.err(bracket, `**WHILE** ${which}边界不能为空`);
+    let tokens: Token[];
+    try {
+      tokens = new Lexer(part.text).tokenize();
+    } catch (err) {
+      throw this.relocateLex(err as Error, bracket, part.offset);
+    }
+    const only = tokens[0];
+    if (tokens.length !== 2 || only.type !== "number") {
+      throw this.err(
+        bracket,
+        `**WHILE** ${which}边界须为 NUMBER 字面量（非负整数，如 [0, 3]），实际为「${part.text.trim()}」`,
+      );
+    }
+    if (!/^\d+$/.test(only.value)) {
+      throw this.err(bracket, `**WHILE** ${which}边界须为非负整数（实际为 ${only.value}）`);
+    }
+    return Number(only.value);
+  }
+
+  /** 片段内的词法错误按 `[` 的位置重定位列号（片段内换行已被词法层折叠为空格，行偏移恒为 0） */
+  private relocateLex(err: Error, bracket: Token, offset: number): QueryParseError {
+    if (err instanceof LexError) {
+      return new QueryParseError(err.message, bracket.line, bracket.col + offset + err.col);
+    }
+    throw err;
   }
 
   /* ---------- SEARCH（DSQL 2.2 正文抽取） ---------- */
@@ -326,7 +438,12 @@ class Parser {
         const itemTok = this.peek();
         const expr = this.parseExpr();
         let alias: string | null = null;
-        if (this.matchKw("AS")) alias = this.parseAlias();
+        let aliasVar = false;
+        if (this.matchKw("AS")) {
+          const parsed = this.parseAlias();
+          alias = parsed.name;
+          aliasVar = parsed.isVar;
+        }
         // 裸 $x$ 槽位声明（expr 为变量引用且无别名）：由 COUNT 填充；
         // 与 TOTAL 填充名同名 → 重复声明（TOTAL 自声明自投影，裸槽位冗余且致命）
         if (alias === null && expr.kind === "variable") {
@@ -339,10 +456,10 @@ class Parser {
           continue;
         }
         // expr AS $x$：输出别名，与槽位声明撞名 → 重复声明（统一命名空间）
-        if (alias !== null && this.lastAliasWasVar && this.slotTokens.has(alias)) {
+        if (aliasVar && this.slotTokens.has(alias!)) {
           throw this.err(itemTok, `槽位 $${alias}$ 重复声明`);
         }
-        items.push({ expr, alias });
+        items.push({ expr, alias, ...(aliasVar ? { aliasVar: true as const } : {}) });
       } while (this.matchPunct(","));
     } finally {
       this.inSelect = false;
@@ -351,7 +468,7 @@ class Parser {
     return items;
   }
 
-  /** **TOTAL** 聚合项：操作数限字段/数字，**AS** 强制 $槽位$（DSQL 1.4 引入；2.3 起仅填充不投影） */
+  /** **TOTAL** 聚合项：操作数限字段/数字，**AS** 强制 $槽位$（DSQL 1.4 引入；自声明自投影，见 §6.7） */
   private parseTotalItem(): ColumnSel {
     const start = this.advance(); // TOTAL
     this.totalToken = start;
@@ -392,15 +509,22 @@ class Parser {
     }
     this.fillTokens.set(t.value, t);
     this.totalFillTokens.set(t.value, t);
-    return { expr, alias: t.value, total: true };
+    // aliasVar：TOTAL 别名恒为 $变量$（变量池名称），不参与行字段池校验（§6.7）
+    return { expr, alias: t.value, total: true, aliasVar: true };
   }
 
-  /** AS 别名：裸标识符或 $变量$（后者为输出别名，与槽位共用命名空间）；SELECT 内别名互不相同 */
-  private parseAlias(): string {
+  /**
+   * **AS** 别名（列标签）：裸标识符或 `$变量$`。
+   * 标签互不相同（两者都产出同名列）；裸标识符标签另需在行字段池内唯一（§6.7），
+   * `$变量$` 形态是变量池名称，只受变量池规则约束。
+   *
+   * @returns 别名的裸名，以及是否为 `$变量$` 形态
+   */
+  private parseAlias(): { name: string; isVar: boolean } {
     const tok = this.peek();
+    const isVar = tok.type === "variable";
     let name: string;
-    this.lastAliasWasVar = tok.type === "variable";
-    if (tok.type === "variable") {
+    if (isVar) {
       this.advance();
       name = tok.value;
       if (this.varAliasTokens.has(name)) {
@@ -411,10 +535,11 @@ class Parser {
       name = this.expectIdent("**AS** 后应为别名（标识符或 $变量$）").value;
     }
     if (this.aliasTokens.has(name)) {
-      throw this.err(tok, `别名 '$${name}$' 重复定义（SELECT 内 **AS** 别名互不相同）`);
+      const shown = isVar ? `$${name}$` : name;
+      throw this.err(tok, `别名 '${shown}' 重复定义（SELECT 内 **AS** 别名互不相同）`);
     }
     this.aliasTokens.set(name, tok);
-    return name;
+    return { name, isVar };
   }
 
   /** 静态校验：$变量$ 引用须指向槽位/聚合填充名或更早的输出别名；聚合项（TOTAL）内引用变量 → 循环依赖 */

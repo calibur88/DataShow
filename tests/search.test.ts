@@ -2,6 +2,9 @@
  * @module tests/search
  * @description SEARCH 正文抽取套件：语法 / STRING 词法 / 正则 / 求值 / 执行顺序 / 冲突 /
  * body 来源 / §6.3 算术比较排序补丁 / 排序 / 回归（规范 §十三）
+ *
+ * DSQL 2.4 起 SEARCH 由 **WHILE** 驱动（双向绑定），本套件统一用 `**WHILE** [0, 1]`
+ * 固定为「单轮 = 首个匹配」口径；多轮迭代语义由 while 套件覆盖。
  */
 
 import assert from "node:assert/strict";
@@ -47,7 +50,7 @@ function run(sql: string, bodies?: Map<string, string>): ResultSet & { debug: No
 /** 构造 SEARCH 查询捷径：给两行各配一个 body */
 function searchRun(item: string, bodies: Record<string, string>) {
   const map = new Map(Object.entries(bodies));
-  return run(`**FROM** "小说" **SEARCH** ${item}`, map);
+  return run(`**FROM** "小说" **WHILE** [0, 1] **SEARCH** ${item}`, map);
 }
 
 const parseErr = (sql: string, match: RegExp): void => {
@@ -62,7 +65,7 @@ const parseErr = (sql: string, match: RegExp): void => {
 /* ---------- 13.1 语法 ---------- */
 
 test("[语法] SEARCH 'a' AS x 解析成 SearchNode（pattern / regex / alias / 行列号）", () => {
-  const q = parseQuery('**FROM** "小说" **SEARCH** \'a\' **AS** x');
+  const q = parseQuery('**FROM** "小说" **WHILE** [0, 1] **SEARCH** \'a\' **AS** x');
   assert.equal(q.search!.length, 1);
   assert.equal(q.search![0].pattern, "a");
   assert.ok(q.search![0].regex instanceof RegExp);
@@ -71,22 +74,22 @@ test("[语法] SEARCH 'a' AS x 解析成 SearchNode（pattern / regex / alias / 
 });
 
 test("[语法] 多条模板逗号分隔", () => {
-  const q = parseQuery("**FROM** \"小说\" **SEARCH**\n  '第([一二三四五六七八九十百\\d]+)章' **AS** 章节号,\n  '\\[(.+?)\\]' **AS** 标题");
+  const q = parseQuery("**FROM** \"小说\" **WHILE** [0, 1] **SEARCH**\n  '第([一二三四五六七八九十百\\d]+)章' **AS** 章节号,\n  '\\[(.+?)\\]' **AS** 标题");
   assert.deepEqual(q.search!.map((s) => s.alias), ["章节号", "标题"]);
   assert.equal(q.search![0].pattern, "第([一二三四五六七八九十百\\d]+)章");
   assert.equal(q.search![1].pattern, "\\[(.+?)\\]");
 });
 
 test("[语法] SEARCH 出现两次 → 解析错误（子句重复）", () => {
-  parseErr('**FROM** "小说" **SEARCH** \'a\' **AS** x **SEARCH** \'b\' **AS** y', /子句重复/);
+  parseErr('**FROM** "小说" **WHILE** [0, 1] **SEARCH** \'a\' **AS** x **SEARCH** \'b\' **AS** y', /子句重复/);
 });
 
 test("[语法] SEARCH 'a'（缺 AS）→ 解析错误", () => {
-  parseErr('**FROM** "小说" **SEARCH** \'a\'', /\*\*AS\*\*/);
+  parseErr('**FROM** "小说" **WHILE** [0, 1] **SEARCH** \'a\'', /\*\*AS\*\*/);
 });
 
 test("[语法] SEARCH 'a' AS $x$（变量别名）→ 解析错误", () => {
-  parseErr('**FROM** "小说" **SEARCH** \'a\' **AS** $x$', /裸标识符/);
+  parseErr('**FROM** "小说" **WHILE** [0, 1] **SEARCH** \'a\' **AS** $x$', /裸标识符/);
 });
 
 test("[语法] SEARCH 出现在 WHERE / SELECT 表达式内 → 解析错误", () => {
@@ -94,13 +97,15 @@ test("[语法] SEARCH 出现在 WHERE / SELECT 表达式内 → 解析错误", (
   parseErr('**SELECT** **SEARCH** **FROM** "小说"', /应为表达式/);
 });
 
-test("[语法] SEARCH 需要 FROM 前件", () => {
+test("[语法] SEARCH 需要 WHILE 前件（DSQL 2.4 起 SEARCH 与 WHILE 双向绑定）", () => {
+  // 只写 SEARCH 无 WHILE：前件校验先拦（WHILE 是 SEARCH 的前件）
+  parseErr('**FROM** "小说" **SEARCH** \'a\' **AS** x', /前件/);
   parseErr('**SEARCH** \'a\' **AS** x', /前件/);
 });
 
 /* ---------- 13.2 STRING 解析 ---------- */
 
-const patternOf = (sql: string): string => parseQuery(`**FROM** "小说" **SEARCH** ${sql} **AS** x`).search![0].pattern;
+const patternOf = (sql: string): string => parseQuery(`**FROM** "小说" **WHILE** [0, 1] **SEARCH** ${sql} **AS** x`).search![0].pattern;
 
 test("[STRING] 转义逐字符原样（规范 §3.2 行为对照）", () => {
   assert.equal(patternOf("'\\d+'"), "\\d+");
@@ -113,19 +118,19 @@ test("[STRING] 转义逐字符原样（规范 §3.2 行为对照）", () => {
 });
 
 test("[STRING] 'abc\\'（奇数反斜杠吃掉终止符）→ 词法错误", () => {
-  assert.throws(() => parseQuery("**FROM** \"小说\" **SEARCH** 'abc\\' **AS** x"), /字符串未闭合/);
+  assert.throws(() => parseQuery("**FROM** \"小说\" **WHILE** [0, 1] **SEARCH** 'abc\\' **AS** x"), /字符串未闭合/);
 });
 
 /* ---------- 13.3 正则 ---------- */
 
 test("[正则] '(' / 'a**b' → parse 期致命错误", () => {
-  parseErr('**FROM** "小说" **SEARCH** \'(\' **AS** x', /SEARCH 正则非法/);
-  parseErr('**FROM** "小说" **SEARCH** \'a**b\' **AS** x', /SEARCH 正则非法/);
+  parseErr('**FROM** "小说" **WHILE** [0, 1] **SEARCH** \'(\' **AS** x', /SEARCH 正则非法/);
+  parseErr('**FROM** "小说" **WHILE** [0, 1] **SEARCH** \'a**b\' **AS** x', /SEARCH 正则非法/);
 });
 
 test("[正则] 未转义 \\p{ → parse 期致命错误（奇偶判定）", () => {
-  parseErr('**FROM** "小说" **SEARCH** \'\\p{L}\' **AS** x', /不支持 \\p\{…\}/);
-  assert.doesNotThrow(() => parseQuery('**FROM** "小说" **SEARCH** \'\\\\p{L}\' **AS** x')); // 偶数反斜杠 = 字面文本
+  parseErr('**FROM** "小说" **WHILE** [0, 1] **SEARCH** \'\\p{L}\' **AS** x', /不支持 \\p\{…\}/);
+  assert.doesNotThrow(() => parseQuery('**FROM** "小说" **WHILE** [0, 1] **SEARCH** \'\\\\p{L}\' **AS** x')); // 偶数反斜杠 = 字面文本
 });
 
 test("[正则] 无 flags：大小写敏感", () => {
@@ -169,31 +174,39 @@ test("[求值] 无 body 的行 → 全部字段 null（不是 empty 值，不是
 
 test("[顺序] SEARCH 字段在 WHERE / SORT / SELECT 全部可用", () => {
   const map = new Map([["小说/甲.md", "第3章"], ["小说/乙.md", "第12章"]]);
-  const where = run("**FROM** \"小说\" **SEARCH** '第(\\d+)章' **AS** 章节号 **WHERE** 章节号 %==% '3'", map);
+  const where = run("**FROM** \"小说\" **WHILE** [0, 1] **SEARCH** '第(\\d+)章' **AS** 章节号 **WHERE** 章节号 %==% '3'", map);
   assert.equal(where.rows.length, 1);
   assert.equal(where.rows[0].path, "小说/甲.md");
 
-  const sort = run("**FROM** \"小说\" **SEARCH** '第(\\d+)章' **AS** 章节号 **SORT** 章节号 %+% 0 **DESC**", map);
+  const sort = run("**FROM** \"小说\" **WHILE** [0, 1] **SEARCH** '第(\\d+)章' **AS** 章节号 **SORT** 章节号 %+% 0 **DESC**", map);
   assert.equal(sort.rows[0].path, "小说/乙.md"); // 数值序 12 > 3
 
-  const select = run("**FROM** \"小说\" **SEARCH** '第(\\d+)章' **AS** 章节号 **SELECT** 章节号", map);
+  const select = run("**FROM** \"小说\" **WHILE** [0, 1] **SEARCH** '第(\\d+)章' **AS** 章节号 **SELECT** 章节号", map);
   assert.deepEqual(select.columns.map((c) => c.alias), ["章节号"]);
 });
 
 /* ---------- 13.6 冲突 ---------- */
 
 test("[冲突] SEARCH 别名互相同名 → parse 期", () => {
-  parseErr('**FROM** "小说" **SEARCH** \'a\' **AS** x, \'b\' **AS** x', /重复/);
+  parseErr('**FROM** "小说" **WHILE** [0, 1] **SEARCH** \'a\' **AS** x, \'b\' **AS** x', /重复/);
 });
 
-test("[冲突] SEARCH 别名与 SELECT 别名同名 → parse 期（子句乱序也可判定）", () => {
-  parseErr('**SELECT** 状态 **AS** x **FROM** "小说" **SEARCH** \'a\' **AS** x', /与 SELECT 别名冲突/);
-  parseErr('**FROM** "小说" **SELECT** 状态 **AS** x **SEARCH** \'a\' **AS** x', /与 SELECT 别名冲突/);
+test("[冲突] SEARCH 别名与 SELECT 列标签同名 → parse 期（行字段池内重名；子句乱序也可判定）", () => {
+  parseErr('**SELECT** 状态 **AS** x **FROM** "小说" **WHILE** [0, 1] **SEARCH** \'a\' **AS** x', /与 SELECT 列标签冲突/);
+  parseErr('**FROM** "小说" **SELECT** 状态 **AS** x **WHILE** [0, 1] **SEARCH** \'a\' **AS** x', /与 SELECT 列标签冲突/);
+});
+
+test("[冲突] SEARCH 别名 vs SELECT 的 **AS** $变量$ → 不冲突（变量池与行字段池隔离，§6.7）", () => {
+  // $x$ 是变量池名称、SEARCH 别名 x 是行字段 → 两池隔离，parse 与执行均不报错
+  const r = run('**SELECT** 状态 **AS** $x$ **FROM** "小说" **WHILE** [0, 1] **SEARCH** \'a\' **AS** x');
+  assert.deepEqual(r.columns.map((c) => c.alias), ["x"]);
+  // 同理 $变量$ 别名与已有行字段同名也不报错（此前 DSQL 1.5 按「别名唯一性」致命）
+  assert.doesNotThrow(() => run('**SELECT** 状态 **AS** $状态$ **FROM** "小说" **WHILE** [0, 1] **SEARCH** \'a\' **AS** b'));
 });
 
 test("[冲突] SEARCH 别名与 frontmatter 字段并集冲突 → prepare 期（带 SEARCH 别名行列号）", () => {
   assert.throws(
-    () => run('**FROM** "小说" **SEARCH** \'a\' **AS** 状态', new Map([["小说/甲.md", "a"]])),
+    () => run('**FROM** "小说" **WHILE** [0, 1] **SEARCH** \'a\' **AS** 状态', new Map([["小说/甲.md", "a"]])),
     (err: unknown) => {
       assert.match(String(err), /SEARCH 别名 '状态' 与现有字段名冲突/);
       assert.match(String(err), /第 \d+ 行第 \d+ 列/);
@@ -203,8 +216,8 @@ test("[冲突] SEARCH 别名与 frontmatter 字段并集冲突 → prepare 期�
 });
 
 test("[冲突] SEARCH 别名与 file.* 内置字段冲突 → prepare 期", () => {
-  assert.throws(() => run('**FROM** "小说" **SEARCH** \'a\' **AS** name'), /与现有字段名冲突/);
-  assert.throws(() => run('**FROM** "小说" **SEARCH** \'a\' **AS** file.name'), /与现有字段名冲突/);
+  assert.throws(() => run('**FROM** "小说" **WHILE** [0, 1] **SEARCH** \'a\' **AS** name'), /与现有字段名冲突/);
+  assert.throws(() => run('**FROM** "小说" **WHILE** [0, 1] **SEARCH** \'a\' **AS** file.name'), /与现有字段名冲突/);
 });
 
 /* ---------- 13.7 body 来源 ---------- */
@@ -345,7 +358,7 @@ test("[排序] SORT 字段 %+% 0：数值序，null 排末尾；非原始值同 
     makeRow("S/d.md", "S", {}),
     makeRow("S/e.md", "S", {}),
   ];
-  const r = executeQuery(parseQuery('**FROM** "S" **SEARCH** \'.*\' **AS** 任意 **SELECT** file.name **AS** 名, 字数 **SORT** 字数 %+% 0 **DESC**'), rows, null, {
+  const r = executeQuery(parseQuery('**FROM** "S" **WHILE** [0, 1] **SEARCH** \'.*\' **AS** 任意 **SELECT** file.name **AS** 名, 字数 **SORT** 字数 %+% 0 **DESC**'), rows, null, {
     bodies: new Map([["S/a.md", "x"], ["S/b.md", "x"], ["S/c.md", "x"], ["S/d.md", "x"], ["S/e.md", "x"]]),
   });
   assert.deepEqual(r.rows.map((row) => row.path), ["S/a.md", "S/b.md", "S/c.md", "S/d.md", "S/e.md"]); // 123 → 45 → null 末尾稳定序
@@ -382,7 +395,7 @@ test("[回归] 无 SEARCH 的查询不传 bodies，行为与现状完全一致",
 
 test("[回归] TOTAL 口径不变：恒忽略 WHERE，基于 FROM 全量行", () => {
   const map = new Map([["小说/甲.md", "v"]]);
-  const r = run("**FROM** \"小说\" **SEARCH** 'v' **AS** x **SELECT** **TOTAL** 1 **AS** $行数$, x **WHERE** x %==% 'v'", map);
+  const r = run("**FROM** \"小说\" **WHILE** [0, 1] **SEARCH** 'v' **AS** x **SELECT** **TOTAL** 1 **AS** $行数$, x **WHERE** x %==% 'v'", map);
   assert.equal(r.globals?.get("行数"), 2); // 聚合遍忽略 WHERE（乙无 body → x=null 也计入 FROM 全量）
   assert.equal(r.rows.length, 1); // WHERE 只过滤显示行
 });

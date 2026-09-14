@@ -1,10 +1,10 @@
 /**
  * @module dsql/executor
- * @description DSQL 执行器：按 FROM → [ext] 行并入 → SEARCH 正文抽取 → 聚合遍（TOTAL）→ WHERE → COUNT → SORT → LIMIT → SELECT 管线执行查询
+ * @description DSQL 执行器：按 FROM → [ext] 行并入 → WHILE + SEARCH 结构匹配 → 聚合遍（TOTAL）→ WHERE → COUNT → SORT → LIMIT → SELECT 管线执行查询
  *
  * 两遍执行模型：FROM 源解析后，[ext] 行按 path 去重并入（调用方按 FROM 范围预读）；
- * SEARCH 正文抽取在聚合遍之前（TOTAL 可聚合数值抽取字段，DSQL 2.3 起）；
- * 第一遍聚合遍（FROM 全量命中行——含 [ext] 非 md 行，**忽略 WHERE**，计算 **TOTAL** → 变量表）；
+ * WHILE 驱动的 SEARCH 结构匹配在聚合遍之前（TOTAL 可聚合数值抽取字段，数字串隐式转数值，DSQL 2.4 起）；
+ * 第一遍聚合遍（匹配后全量命中行——含 [ext] 非 md 行与补 null 行，**忽略 WHERE**，计算 **TOTAL** → 变量表）；
  * 第二遍投影遍（WHERE → **COUNT** → SORT → LIMIT → SELECT 投影，
  * $变量$ 查变量表、裸标识符查行字段）。
  * 语义：类型不匹配/除零/缺字段为非致命（求值 null，计入 warnings）；算术 / 比较做
@@ -12,7 +12,8 @@
  * 视图关键词仅透传 ResultSet.view，不影响数据管线（TABLE_VIEW / LIST_VIEW / CARD_VIEW）。
  */
 
-import type { BinOp, Expr, Query, Source } from "./ast";
+import type { BinOp, Expr, Query, Source, WhileNode } from "./ast";
+import { toNumber } from "./coerce";
 import { callFunction } from "./functions";
 import { EMPTY, type DataRow, type FieldValue, type ViewType } from "./types";
 
@@ -52,11 +53,13 @@ export interface QueryDebug {
   executionTimeMs: number;
 }
 
-/** DSQL 2.2：单条 SEARCH 模板的命中统计（调试页） */
+/** DSQL 2.2：单条 SEARCH 模板的产出统计（调试页）；DSQL 2.4 起按 WHILE 迭代产出计数 */
 export interface SearchStat {
   alias: string;
   pattern: string;
+  /** 产出到实际匹配的单元格数 */
   hits: number;
+  /** 产出 null（匹配不足补位 / 无 body）的单元格数 */
   misses: number;
   /** 抽取值示例（≤3） */
   samples: string[];
@@ -68,7 +71,11 @@ export interface ResultSet {
   /** 实际使用的列（SELECT * 已展开为字段并集） */
   columns: { alias: string; expr: Expr; total?: true }[];
   rows: DataRow[];
-  /** DSQL 1.4：全局变量表（**TOTAL** 聚合 + DSQL 2.3 **COUNT** 计数填充的槽位，裸名键）；无聚合 / 计数项时为 null */
+  /**
+   * DSQL 1.4：全局变量表（**TOTAL** 聚合 + DSQL 2.3 **COUNT** 计数填充的槽位，裸名键）。
+   * 查询开始时即建为空表（故恒非 null）：投影遍的 `expr **AS** $变量$` 链式派生依赖它逐行克隆
+   * （§6.7），与查询是否含 TOTAL / COUNT 无关。
+   */
   globals: Map<string, FieldValue> | null;
   debug?: QueryDebug;
 }
@@ -85,7 +92,7 @@ export interface ExecuteOptions {
    */
   extRows?: DataRow[];
   /**
-   * DSQL 2.2：行 path → 正文（SEARCH 查询专用，调用方按 FROM 命中范围预读；
+   * DSQL 2.2 起：行 path → 正文（WHILE + SEARCH 查询专用，调用方按 FROM 命中范围预读；
    * md 已剥 frontmatter、非 md 已剥围栏）。缺条目的行按「无 body」求值（字段 null）。
    */
   bodies?: Map<string, string>;
@@ -110,8 +117,8 @@ interface ExecState {
   fieldNames: Set<string> | null;
   searchAliases: string[];
   searchMsg: string | null;
-  /** 聚合 / 计数填充的变量表 */
-  globals: Map<string, FieldValue> | null;
+  /** 变量表：查询开始即建为空表，聚合 / 计数阶段写入；投影遍的链式派生依赖它（§6.7） */
+  globals: Map<string, FieldValue>;
 }
 
 /**
@@ -210,7 +217,7 @@ function createState(q: Query, ctx: DataRow | null, opts: ExecuteOptions): ExecS
   return {
     q, ctx, opts, enabled, missing, warnCounts, track, warn,
     matched: [], fromMsg: "", sourceStats: [], extMerged: 0,
-    fieldNames: null, searchAliases: [], searchMsg: null, globals: null,
+    fieldNames: null, searchAliases: [], searchMsg: null, globals: new Map(),
   };
 }
 
@@ -233,7 +240,7 @@ function stageFrom(state: ExecState, rows: DataRow[]): void {
     (state.enabled && state.extMerged > 0 ? `（含 [ext] 并入 ${state.extMerged} 行）` : "");
 }
 
-/** FROM 命中行的原始字段名并集（SEARCH 冲突检查与别名唯一性校验共享，单次构建） */
+/** FROM 命中行的原始字段名并集（SEARCH 冲突检查与列标签校验共享，单次构建） */
 function rawFieldNames(state: ExecState): Set<string> {
   if (state.fieldNames === null) {
     const names = new Set<string>();
@@ -244,9 +251,11 @@ function rawFieldNames(state: ExecState): Set<string> {
 }
 
 /**
- * SEARCH（DSQL 2.2：正文抽取，在聚合遍之前——TOTAL 可聚合数值抽取字段，WHERE / SORT 才能用）。
+ * WHILE + SEARCH（DSQL 2.4：循环驱动的正文匹配，在聚合遍之前——TOTAL 可聚合数值抽取字段）。
+ * 轮数 = `结束 - 起始`，两边界由 parse 期静态校验（非负整数字面量、起始 < 结束），运行期恒定、与行无关；
+ * 每行产出「轮数」行：各模板游标逐轮推进一次，匹配不足补 null（不提前停）。
  * prepare 期冲突（FROM 元数据收集后、抽取前）：frontmatter 字段名并集 + file.* 内置字段；
- * 行列号在 parse 期记录进 AST（SELECT / SEARCH 别名冲突才是 parse 期）。
+ * 行列号在 parse 期记录进 AST（SEARCH 别名 vs SELECT 列标签的冲突才是 parse 期）。
  */
 function stageSearch(state: ExecState): SearchStat[] | null {
   const { q } = state;
@@ -263,48 +272,93 @@ function stageSearch(state: ExecState): SearchStat[] | null {
   state.searchAliases = q.search.map((item) => item.alias);
 
   const stats = q.search.map((item) => ({ alias: item.alias, pattern: item.pattern, hits: 0, misses: 0, samples: [] as string[] }));
-  state.matched = state.matched.map((row) => {
-    const fields = { ...row.fields }; // 克隆：SEARCH 字段不写回行仓库
-    for (let i = 0; i < q.search!.length; i++) {
-      const item = q.search![i];
-      const body = state.opts.bodies?.get(row.path);
-      let value: FieldValue = null; // 无 body / 无匹配 → null（不是 empty 值，不是 ""）
-      if (body !== undefined) {
-        const m = item.regex.exec(body); // exec 天然只返回首个匹配
-        if (m !== null) {
-          value = m[1] !== undefined ? m[1] : m[0]; // 有捕获组取 m[1]，未匹配/无捕获组回落 m[0]
-          fields[item.alias] = value; // 原始字符串，逐字符保留，不做类型推断
+  const sourceRows = state.matched.length;
+  const expanded: DataRow[] = [];
+  const rounds = whileRounds(q.while);
+  // 游标模板：每模板预构造一次全局副本，逐行仅重置 lastIndex（避免每行每模板 new RegExp）
+  const cursors = q.search.map((item) => globalCopy(item.regex));
+  let iterations = 0;
+
+  for (const row of state.matched) {
+    iterations += rounds;
+    const body = state.opts.bodies?.get(row.path);
+    // 每模板只取本轮需要的匹配数（避免为少量迭代全文扫描）
+    const picks = cursors.map((re) => takeMatches(re, body, rounds));
+    for (let k = 0; k < rounds; k++) {
+      const fields = { ...row.fields }; // 克隆：SEARCH 字段不写回行仓库
+      for (let i = 0; i < q.search.length; i++) {
+        const value = picks[i][k] ?? null; // 匹配不足 → null（不是 empty 值，不是 ""）
+        fields[q.search[i].alias] = value;
+        if (value === null) {
+          stats[i].misses++;
+        } else {
           stats[i].hits++;
           if (stats[i].samples.length < 3) stats[i].samples.push(value);
-          continue;
         }
       }
-      fields[item.alias] = null;
-      stats[i].misses++;
+      expanded.push({ ...row, fields });
     }
-    return { ...row, fields };
-  });
+  }
+  state.matched = expanded;
 
   if (state.enabled) {
     const hits = stats.reduce((sum, s) => sum + s.hits, 0);
     const misses = stats.reduce((sum, s) => sum + s.misses, 0);
-    state.searchMsg = `${q.search.length} 个模板 × ${state.matched.length} 行：命中 ${hits}，未命中 ${misses}`;
+    state.searchMsg = `${q.search.length} 个模板 × ${sourceRows} 行 × 共 ${iterations} 轮迭代：命中 ${hits}，补 null ${misses}`;
   }
   return stats;
 }
 
-/** 别名唯一性行字段冲突校验（DSQL 1.5：聚合遍开始前；裸槽位仅填充不投影，不参与判定）。
- *  判定范围 = FROM 全量命中行的字段名并集（SEARCH 已把别名挂进行字段，一并计入），
- *  任一行出现过该字段名即冲突 → 致命错误。 */
+/**
+ * WHILE 迭代次数 = 结束 - 起始（边界为非负整数字面量、起始 < 结束，parse 期已校验，
+ * 运行期恒定，与行无关）。
+ */
+function whileRounds(node: WhileNode | null): number {
+  if (node === null) return 1; // 理论不可达：WHILE 与 SEARCH 双向绑定，parse 期已保证
+  return node.end - node.start;
+}
+
+/**
+ * 取正则的前 need 个匹配：有捕获组取 `m[1]`（可选捕获组未匹配回落 `m[0]`），无捕获组取 `m[0]`；
+ * 无 body / need ≤ 0 → 空数组。§6.10 定稿「无 flags」，故游标副本由调用方预构造、逐行重置
+ * （见 globalCopy）；空匹配（如 `.*`）推进 lastIndex，防止死循环。
+ *
+ * @param re - 全局副本（`g` flag，可反复复用，本函数进入时重置游标）
+ * @param body - 行正文
+ * @param need - 需要取到的匹配数
+ */
+function takeMatches(re: RegExp, body: string | undefined, need: number): string[] {
+  if (body === undefined || need <= 0) return [];
+  re.lastIndex = 0;
+  const out: string[] = [];
+  while (out.length < need) {
+    const m = re.exec(body);
+    if (m === null) break;
+    out.push(m[1] !== undefined ? m[1] : m[0]);
+    if (m[0] === "") re.lastIndex++;
+  }
+  return out;
+}
+
+/** 取正则的全局副本（已带 `g` 则原样返回；用户语法层无 flags，故此处仅补游标推进所需） */
+function globalCopy(re: RegExp): RegExp {
+  return re.global ? re : new RegExp(re.source, `${re.flags}g`);
+}
+
+/**
+ * 列标签行字段冲突校验（DSQL 1.5：聚合遍开始前）。
+ * 判定范围 = FROM 全量命中行的字段名并集 ∪ SEARCH 别名（都属行字段池），任一行出现过即冲突。
+ * 裸槽位与被填充的槽位、`**AS** $变量$` 都是变量池名称，不在此校验（两池隔离，§6.7）。
+ */
 function checkSelectAliases(state: ExecState): void {
   const { q } = state;
-  const aliasedItems = q.select === "*" ? [] : q.select.filter((c) => c.alias && !c.slot);
+  const aliasedItems = q.select === "*" ? [] : q.select.filter((c) => c.alias && !c.slot && !c.aliasVar);
   if (aliasedItems.length === 0) return;
   const fieldNames = new Set(rawFieldNames(state));
   for (const alias of state.searchAliases) fieldNames.add(alias);
   for (const item of aliasedItems) {
     if (fieldNames.has(item.alias!)) {
-      throw new Error(`[DSQL] 别名 '$${item.alias}$' 与现有字段名冲突，请改用其他别名`);
+      throw new Error(`[DSQL] 列标签 '${item.alias}' 与现有字段名冲突，请改用其他别名`);
     }
   }
 }
@@ -315,7 +369,6 @@ function stageAggregate(state: ExecState): string[] {
   const totalItems = state.q.select === "*" ? [] : state.q.select.filter((c) => c.total);
   if (totalItems.length === 0) return aggMsgs;
 
-  state.globals = new Map();
   for (const item of totalItems) {
     const alias = item.alias!;
     let value = null;
@@ -328,7 +381,10 @@ function stageAggregate(state: ExecState): string[] {
       let skipped = 0;
       for (const row of state.matched) {
         const v = evaluateExpr(item.expr, row, state.ctx, state.track, state.warn);
-        if (typeof v === "number") sum = (sum ?? 0) + v;
+        // 隐式转换（§6.3）：数字与数字串均可累加——SEARCH 抽取字段不做类型推断，
+        // 数值串（如 "100"）可被 TOTAL 求和；非数值（非数值串 / 数组）跳过并计入 warnings
+        const n = toNumber(v);
+        if (n !== null) sum = (sum ?? 0) + n;
         else if (v != null) skipped++;
       }
       if (sum == null) {
@@ -366,7 +422,6 @@ function stageCount(state: ExecState): string[] {
   const countMsgs: string[] = [];
   if (!state.q.count || state.q.count.length === 0) return countMsgs;
 
-  state.globals ??= new Map();
   for (const item of state.q.count) {
     let n = 0;
     for (const row of state.matched) {
@@ -582,21 +637,6 @@ function applyArithmetic(op: "+" | "-" | "*" | "/" | "%" | "^", ln: number, rn: 
 /** 非原始值判定（数组；null / 原始类型为原始值）。 */
 function isNonPrimitive(v: FieldValue): boolean {
   return Array.isArray(v);
-}
-
-/**
- * §6.3 补丁（DSQL 2.2）：Number() 转换。空串 / 全空白 / 非数值串转不出 → null；
- * 非有限数（NaN / ±Infinity）视为转不出。仅接受原始值（非原始值由调用方先行守卫）。
- */
-function toNumber(v: FieldValue): number | null {
-  if (typeof v === "number") return v;
-  if (typeof v === "boolean") return v ? 1 : 0;
-  if (typeof v === "string") {
-    if (v.trim() === "") return null;
-    const n = Number(v);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
 }
 
 /**

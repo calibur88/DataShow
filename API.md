@@ -1,7 +1,7 @@
 # DataShow API 文档
 
 分两部分：**官方 API**（Obsidian 提供、本插件用到的接口）与**插件 API**（DataShow 自身导出、
-可供二次开发 / 测试使用的接口）。示例均基于当前版本（插件 2.1.4，DSQL 2.3，minAppVersion 1.4.4）。
+可供二次开发 / 测试使用的接口）。示例均基于当前版本（插件 2.2.0，DSQL 2.4，minAppVersion 1.4.4）。
 
 ---
 
@@ -66,14 +66,14 @@ import { executeQuery, evaluateExpr, compareUtf8 } from "./src/core/dsql/executo
 | 导出 | 签名 | 说明 |
 |---|---|---|
 | `parseQuery(source)` | `string → Query` | DSQL → AST；错误 `QueryParseError`（带 line / col） |
-| `executeQuery(q, rows, ctx, opts?)` | `→ ResultSet` | 执行：FROM 源解析 → [ext] 行并入 → SEARCH 正文抽取 → 聚合遍（TOTAL）→ WHERE → COUNT → SORT / LIMIT / SELECT；`opts.debug` 收集调试信息，`opts.ingestWarnings` 并入摄取期警告，`opts.extRows` / `opts.bodies` 由面板按 FROM 范围预读后传入 |
+| `executeQuery(q, rows, ctx, opts?)` | `→ ResultSet` | 执行：FROM 源解析 → [ext] 行并入 → WHILE + SEARCH 结构匹配 → 聚合遍（TOTAL）→ WHERE → COUNT → SORT / LIMIT / SELECT；`opts.debug` 收集调试信息，`opts.ingestWarnings` 并入摄取期警告，`opts.extRows` / `opts.bodies` 由面板按 FROM 范围预读后传入 |
 | `evaluateExpr(expr, row, ctx, track?, warn?, vars?)` | `→ FieldValue` | 单表达式求值（面板渲染单元格共用） |
 | `truthy(v)` | `FieldValue → boolean` | 裸真值判断（empty 值 / null / 0 / false / 空串 / 空数组 → 假） |
 | `compareUtf8(a, b)` | `(string, string) → number` | UTF-8 字节序比较（排序 / 自动列的确定性基准；含同一性快路径） |
 | `FUNCTION_NAMES` | `ReadonlySet<string>` | 内置函数名单一事实源（词法层校验用，与 `FUNCTIONS` 表同源，不会漂移） |
 | `EMPTY` | `FieldValue`（symbol 哨兵） | DSQL 未赋值哨兵（`src/core/dsql/types.ts`）；仅 `**empty**()` 能识别，其余运算按 null 传播 |
-| `ResultSet` | `{ view, columns, rows, globals, debug? }` | `view: ViewType`；`columns: { alias, expr, total? }[]`；`globals` = TOTAL / COUNT 填充的变量表（无则 null）；`debug` 见下 |
-| `QueryDebug` | `{ from, where, sort, limit, fieldMisses, warnings, sourceStats, aggregates, search, count, executionTimeMs }` | 调试信息（`aggregates` = TOTAL 项、`search` = 各 SEARCH 模板命中统计、`count` = 各 COUNT 计数项，调试页对应 AGG / SEARCH / COUNT 行） |
+| `ResultSet` | `{ view, columns, rows, globals, debug? }` | `view: ViewType`；`columns: { alias, expr, total? }[]`；`globals` = 变量表（TOTAL / COUNT 填充的槽位 + 投影遍链式派生的基准，**查询开始即建为空表、恒非 null**）；`debug` 见下 |
+| `QueryDebug` | `{ from, where, sort, limit, fieldMisses, warnings, sourceStats, aggregates, search, count, executionTimeMs }` | 调试信息（`aggregates` = TOTAL 项、`search` = 各 SEARCH 模板命中统计（DSQL 2.4 起按 WHILE 迭代产出计数）、`count` = 各 COUNT 计数项，调试页对应 AGG / SEARCH / COUNT 行） |
 | `QueryWarning` | `{ type, message }` | 结构化警告（除零 / 类型不匹配 / 未知函数 / TOTAL / SORT / duplicateKey 等） |
 
 语法与语义见 [docs/DSQL-语言规范.md](docs/DSQL-语言规范.md)。
@@ -134,12 +134,12 @@ findDuplicateKeys(content): { field: string; rawLines: string[] }[];
 - 视图与 SQL 双向同步工具：`src/utils/viewSync.ts` 的
   `applyViewType(board, type)` / `detectTypeFromSql(sql)` / `normalizeSqlView(sql, type)`（均为纯函数）。
 
-### 6. host 层接口与依赖注入（v2.1.4 新增）
+### 6. host 层接口与依赖注入（v2.1.4 新增；v2.2.0 新增 IExportHost）
 
 `src/host/types.ts` 是 **宿主接口与依赖契约的唯一出口**，所有跨层能力均经本文件声明；
 `src/host/obsidian/` 实现适配器，`src/main.ts` 装配注入，业务层只认接口。
 
-**七条宿主接口**（`IFrontmatterEditor` 与属性编辑弹窗链路已随 v2.0 编辑权收敛删除）：
+**八条宿主接口**（`IFrontmatterEditor` 与属性编辑弹窗链路已随 v2.0 编辑权收敛删除）：
 
 | 接口 | 用途 | 关键方法 |
 |---|---|---|
@@ -150,6 +150,7 @@ findDuplicateKeys(content): { field: string; rawLines: string[] }[];
 | `IStorageHost` | 带 key 的持久化槽位 | `load<T>(key)` / `save(key, data)` |
 | `IUiHost` | 用户反馈与日志 | `notify(msg)` / `warn(msg)` / `error(msg)` |
 | `IExtSourceHost` | [ext] 文件级读取 / SEARCH 正文读取（查询级，无常驻状态） | `listFiles(folderPaths)` / `readMd(path)` / `readNonMdText(path)` / `readBody(path)` |
+| `IExportHost` | 结果导出：把文本写入 vault 相对路径（自动建目录、越界校验） | `writeExport(path, content)` |
 
 另有 `IFileMeta`（行元数据契约，`host/obsidian/file-meta.ts` 的 `toMeta` 由 vault-host 与
 ext-source-host 共用实现）与 `IRowSource`（`core/index/store.ts` 的只读数据视图，非宿主接口）：
@@ -161,11 +162,39 @@ ext-source-host 共用实现）与 `IRowSource`（`core/index/store.ts` 的只�
 
 | 契约 | 使用者 | 含有的能力 |
 |---|---|---|
-| `PanelDeps` | `render/panel-view.ts` → `views/panel.ts` | `rows` + `settings()` + `saveSettings()` + `onBoardsChange()` + `onVaultChange()` + `extSource` + `codec` + `opener` + `frontmatter` + `ui` |
+| `PanelDeps` | `render/panel-view.ts` → `views/panel.ts` | `rows` + `settings()` + `saveSettings()` + `onBoardsChange()` + `onVaultChange()` + `extSource` + `codec` + `opener` + `frontmatter` + `ui` + `exporter` |
 | `SidebarDeps` | `render/sidebar-view.ts` → `views/sidebar.ts` | `settings()` + `saveSettings()` + `openBoard()` + `onBoardsChange()` |
 | `SettingsTabDeps` | `views/settings-tab.ts` | `settings()` + `saveSettings()` + `defaultBoards()` |
 
-**移植提示**：换宿主只需重写 `main.ts` + `views/` + `host/obsidian/`（实现全部七条接口），
+**移植提示**：换宿主只需重写 `main.ts` + `views/` + `host/obsidian/`（实现全部八条接口），
 `core/` / `controller/` / `render/` / `settings/` / `utils/` 逐字不动；
 另需宿主提供 `HTMLElement` 的 `createDiv` / `createEl` / `createSpan` / `addClass` / `toggleClass` / `isShown` 等原型扩展
 （或改用 `utils/dom` 的等价实现）。
+
+### 7. 结果导出（`src/render/export.ts` + `IExportHost`）
+
+导出为纯函数模块（零宿主依赖），UI 层调用后由宿主接口写入 vault：
+
+| 导出 | 签名 | 说明 |
+|---|---|---|
+| `resolveExportPath(raw)` | `string → { ok, path, format } \| { ok: false, reason }` | 解析 vault 相对路径；合法扩展名 `.json` / `.csv`；拒绝绝对路径、`..` 越界、非法字符、`.xlsx`（提示用 Excel 另存） |
+| `exportHeaders(result, withoutId)` | `→ string[]` | 导出表头（含可选「文件」列，重名加 `_n` 后缀） |
+| `rowSearchText(result, row, decimalPlaces)` | `→ string` | 行搜索文本（文件标题 + 列名 + 显示值），与结果区可见文本一致，过滤共用 |
+| `filterRows(result, term, decimalPlaces)` | `→ DataRow[]` | 按已生效搜索词过滤（不区分大小写子串；空词返回全部） |
+| `toJSON(result, rows, withoutId)` | `→ string` | 序列化为 JSON（保留原始类型，格式化、末尾换行）；empty 值 → `null` 且保留键 |
+| `toCSV(result, rows, withoutId, decimalPlaces)` | `→ string` | 序列化为 CSV（RFC 4180：逗号分隔、CRLF、引号转义）；走 `formatCell`，null / empty 值 → `—` |
+| `buildExport(format, result, rows, withoutId, decimalPlaces)` | `→ ExportPayload` | 按格式分派，返回 `{ format, data }` |
+
+`src/render/format.ts` 的 `formatCell(value, places)` 是 null / empty 值显示文本的**唯一出口**：
+三视图渲染、CSV 导出与结果区搜索文本共用（`EMPTY` 与 null 同口径 → `—`，内部 `Symbol` 不外露）。
+
+宿主写入接口（`src/host/types.ts`，v2.2.0 新增第八条接口）：
+
+```ts
+interface IExportHost {
+  writeExport(path: string, content: string): Promise<void>;  // vault 相对路径，自动建目录、越界校验
+}
+```
+
+`ObsidianExportHost`（`src/host/obsidian/export-host.ts`）经 `normalizePath` 归一路径、递归 `createFolder` 建目录，
+`vault.create` / `vault.modify` 写入，越出 vault 根（`..` / 前导 `/` / 盘符）直接拒绝。

@@ -8,6 +8,7 @@
 
 import { evaluateExpr, type ResultSet } from "@dsql/executor";
 import type { DataRow } from "@dsql/types";
+import { formatCell } from "@render/format";
 
 export interface TableViewArgs {
   result: ResultSet;
@@ -17,16 +18,18 @@ export interface TableViewArgs {
   decimalPlaces: number;
   /** 打开笔记回调（行点击触发） */
   onOpenFile: (row: DataRow) => void;
+  /** 行搜索文本回调：写入行元素 dataset，作为全视图搜索的匹配依据 */
+  searchText: (row: DataRow) => string;
 }
 
 /**
  * 渲染表格视图。
  *
- * @param args - 视图参数（结果集、WITHOUT ID、小数位、打开笔记回调）
+ * @param args - 视图参数（结果集、WITHOUT ID、小数位、打开笔记回调、行搜索文本回调）
  * @returns 表格根元素
  */
 export function renderTableView(args: TableViewArgs): HTMLElement {
-  const { result, withoutId, decimalPlaces, onOpenFile } = args;
+  const { result, withoutId, decimalPlaces, onOpenFile, searchText } = args;
   const wrap = document.createElement("div");
   wrap.className = "datashow-result__tablewrap";
 
@@ -38,7 +41,9 @@ export function renderTableView(args: TableViewArgs): HTMLElement {
   const tbody = table.createEl("tbody");
   for (const row of result.rows) {
     const tr = tbody.createEl("tr");
-    tr.classList.add("datashow-result__row");
+    // datashow-row 为三视图统一的行标记（全视图搜索过滤据此定位行元素）
+    tr.classList.add("datashow-result__row", "datashow-row");
+    tr.dataset.searchText = searchText(row);
     tr.title = "点击打开笔记";
     tr.addEventListener("click", () => onOpenFile(row));
 
@@ -65,15 +70,4 @@ export function renderTableView(args: TableViewArgs): HTMLElement {
   }
   wrap.createDiv({ cls: "datashow-result__count", text: `${result.rows.length} 行` });
   return wrap;
-}
-
-function formatCell(value: unknown, places = 4): string {
-  if (value == null) return "—";
-  if (Array.isArray(value)) return value.map((v) => formatCell(v, places)).join(", ");
-  if (typeof value === "boolean") return value ? "是" : "否";
-  if (typeof value === "number" && !Number.isInteger(value)) {
-    const p = Number.isInteger(places) && places >= 0 && places <= 100 ? places : 4;
-    return String(parseFloat(value.toFixed(p)));
-  }
-  return String(value);
 }

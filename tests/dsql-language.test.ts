@@ -80,8 +80,35 @@ test("子句重复报错（每条至多一次，含 WITHOUT ID）", () => {
   assert.throws(() => parseQuery(`**SELECT** a **FROM** "x" **FROM** "y"`), /\*\*FROM\*\* 子句重复出现/);
   assert.throws(() => parseQuery(`**FROM** "x" **WHERE** a **WHERE** b`), /\*\*WHERE\*\* 子句重复出现/);
   assert.throws(() => parseQuery(`**FROM** "x" **LIMIT** 1 **LIMIT** 2`), /\*\*LIMIT\*\* 子句重复出现/);
+  assert.throws(() => parseQuery(`**FROM** "x" **WHILE** [0, 1] **WHILE** [0, 1] **SEARCH** 'a' **AS** b`), /\*\*WHILE\*\* 子句重复出现/);
   assert.throws(() => parseQuery(`**FROM** "x" **WITHOUT** **ID** **WITHOUT** **ID**`), /重复出现/);
   assert.throws(() => parseQuery(`**FROM** "x" **WHERE** a **ASC**`), /多余的查询子句/);
+});
+
+/* ---------- DSQL 2.4：WHILE 前件与双向绑定 ---------- */
+
+test("**WHILE** 前件为 **FROM**：FROM 未出现 → 致命（带行列号）", () => {
+  assert.throws(() => parseQuery(`**WHILE** [0, 1] **FROM** "x" **SEARCH** 'a' **AS** b`), (e: unknown) =>
+    e instanceof QueryParseError && /\*\*WHILE\*\* 需要 \*\*FROM\*\* 作为前件/.test((e as Error).message));
+});
+
+test("**SEARCH** 前件为 **WHILE**：WHILE 未出现 / 写在 SEARCH 之后 → 致命", () => {
+  assert.throws(() => parseQuery(`**FROM** "x" **SEARCH** 'a' **AS** b`), /\*\*SEARCH\*\* 需要 \*\*WHILE\*\* 作为前件/);
+  assert.throws(() => parseQuery(`**FROM** "x" **SEARCH** 'a' **AS** b **WHILE** [0, 1]`), /\*\*SEARCH\*\* 需要 \*\*WHILE\*\* 作为前件/);
+});
+
+test("**WHILE** 与 **SEARCH** 双向绑定：只写 WHILE → 致命", () => {
+  assert.throws(() => parseQuery(`**FROM** "x" **WHILE** [0, 1]`), /\*\*WHILE\*\* 需 \*\*SEARCH\*\* 配合/);
+});
+
+test("**WHILE** 与其它子句自由穿插（依赖序 FROM → WHILE → SEARCH 可被穿插）", () => {
+  // SORT 在 WHILE 前、WHERE 在 WHILE 后 SEARCH 前
+  const q = parseQuery(`**FROM** "x" **SORT** a **ASC** **WHILE** [0, 2] **WHERE** b **SEARCH** 'a' **AS** c`);
+  assert.equal(q.while!.start, 0);
+  assert.equal(q.while!.end, 2);
+  assert.ok(q.while!.line >= 1 && q.while!.col >= 1);
+  assert.equal(q.where !== null, true);
+  assert.equal(q.search!.length, 1);
 });
 
 test("**WITHOUT** **ID** 可在任意子句位置", () => {
@@ -151,7 +178,7 @@ test("引用未声明变量（含反向引用）→ 致命报错", () => {
   );
 });
 
-test("两个 AS 别名同名 → 致命报错（DSQL 1.5 别名唯一性）", () => {
+test("两个 AS 列标签同名 → 致命报错（列标签唯一性，DSQL 1.5）", () => {
   assert.throws(
     () => parseQuery(`**SELECT** 成绩 %+% 1 **AS** $x$, 成绩 %+% 2 **AS** $x$ **FROM** "M"`),
     /重复定义/,
@@ -162,7 +189,7 @@ test("两个 AS 别名同名 → 致命报错（DSQL 1.5 别名唯一性）", ()
   );
 });
 
-test("非 TOTAL 场景别名与行字段冲突 → 致命报错（DSQL 1.5：聚合遍开始前校验）", () => {
+test("裸标识符列标签与行字段冲突 → 致命报错（DSQL 1.5：聚合遍开始前校验）", () => {
   assert.throws(
     () => exec(`**SELECT** priority %+% 1 **AS** status **FROM** "Notes"`),
     /与现有字段名冲突/,
@@ -175,12 +202,10 @@ test("NUMBER 词法：1. 与 .5 均为词法错误（小数点后必须至少一
   assert.throws(() => parseQuery(`**FROM** "M" **LIMIT** 1.`), /非法数字/);
 });
 
-test("别名与行字段名冲突 → 致命报错（执行期校验）", () => {
-  // 共享数据集行字段含 status：别名 status 与之冲突
-  assert.throws(
-    () => exec(`**SELECT** **TOTAL** 1 **AS** $status$ **FROM** "Notes"`),
-    /与现有字段名冲突/,
-  );
+test("**AS** $变量$ 与行字段同名不报错（变量池与行字段池隔离，DSQL 2.4）", () => {
+  // 共享数据集行字段含 status：$status$ 是变量池名称，两者分属两池 → 不再按「别名唯一性」致命
+  const r = exec(`**SELECT** **TOTAL** 1 **AS** $status$ **FROM** "Notes"`);
+  assert.equal(r.globals?.get("status"), 3); // Notes 目录 3 行
 });
 
 test("TOTAL **AS** 强制 $槽位$；自声明与裸槽位同名 → 重复声明（DSQL 2.3）", () => {

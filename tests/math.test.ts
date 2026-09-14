@@ -87,6 +87,20 @@ test("内置函数 sqrt/cbrt/root/contains/length/lower/upper/empty", () => {
   assert.equal(evalOne(`**empty**(null)`), false);
 });
 
+test("数值族函数按 §6.3 隐式转换取数：数字串 / 布尔与数字同等（与算术口径一致）", () => {
+  const evalOne = evalOn({ 数字串: "16", 串: "abc", 空白串: "  ", 真: true, 假: false, 空串: "", 数组: [16] });
+  assert.equal(evalOne(`**sqrt**(数字串)`), 4);       // SEARCH 抽取的数字串可直接开方
+  assert.equal(evalOne(`**cbrt**('27')`), 3);        // STRING 字面量同样按 §6.3 转数
+  assert.equal(evalOne(`**root**(数字串, '4')`), 2);
+  assert.equal(evalOne(`**sqrt**(真)`), 1);
+  assert.equal(evalOne(`**sqrt**(假)`), 0);
+  assert.equal(evalOne(`**sqrt**(串)`), null);        // 非数值串转不出
+  assert.equal(evalOne(`**sqrt**(空白串)`), null);    // 全空白转不出
+  assert.equal(evalOne(`**sqrt**(空串)`), null);
+  assert.equal(evalOne(`**sqrt**(缺失)`), null);
+  assert.equal(evalOne(`**sqrt**(数组)`), null);      // 非原始值不参与隐式转换
+});
+
 /* ---------- 三值语义：0 / null / empty 值分家（DSQL 1.5） ---------- */
 
 test("裸真值判断：0、false、空串、空数组、null、empty 值均为假", () => {
@@ -185,7 +199,7 @@ test("平均派生（总成绩/总人数，投影期链式计算）", () => {
   assert.equal(v, 75); // 300 / 4（TOTAL 1 计全部命中行）
 });
 
-test("链式派生列（从左到右，前变量可供后列引用）", () => {
+test("链式派生列（从左到右，前变量可供后列引用；无 TOTAL / COUNT 时同样成立）", () => {
   const orders = [
     makeRow("O/x.md", "O", { 单价: 10, 数量: 2 }),
     makeRow("O/y.md", "O", { 单价: 5, 数量: 4 }),
@@ -195,7 +209,9 @@ test("链式派生列（从左到右，前变量可供后列引用）", () => {
     orders,
     null,
   );
-  const vars = new Map<string, FieldValue>();
+  // 变量表恒非 null（§6.7）：链式派生不依赖查询含 TOTAL / COUNT
+  assert.notEqual(r.globals, null);
+  const vars = new Map(r.globals ?? []);
   const v0 = r.columns.map((c) => {
     const v = evaluateExpr(c.expr, r.rows[0], null, undefined, undefined, vars);
     if (c.alias) vars.set(c.alias, v);
