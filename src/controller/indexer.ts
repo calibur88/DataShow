@@ -3,8 +3,8 @@
  * @description 索引器：宿主数据源的全量扫描与增量事件维护，产出唯一的行仓库
  */
 
-import type { IUiHost, IVaultHost } from "@host/types";
-import { findDuplicateKeys } from "@index/frontmatter";
+import type { IngestWarning, IUiHost, IVaultHost } from "@host/types";
+import { findDuplicateKeys, type DuplicateKeyFinding } from "@index/frontmatter";
 import { buildRow } from "@index/row-builder";
 import type { DataStore } from "@index/store";
 
@@ -20,6 +20,7 @@ export class VaultIndexer {
   private pending = new Set<string>();
   private flushTimer: number | null = null;
   private resolvedOnce = false;
+  private rebuilding = false;
   private disposer: (() => void) | null = null;
 
   /**
@@ -37,10 +38,11 @@ export class VaultIndexer {
   start(): void {
     this.disposer = this.vault.subscribe({
       onResolved: () => {
-        // resolved 在每次批量解析后都会触发，仅首次做全量重建，之后交给增量路径
+        // resolved 在每次批量解析后都会触发：仅首次且无重建在途时才补扫
+        //（start() 已直调过一次；重建进行中或行仓库已有数据都跳过，避免双跑）
         if (this.resolvedOnce) return;
         this.resolvedOnce = true;
-        void this.fullRebuild();
+        if (this.store.count() === 0 && !this.rebuilding) void this.fullRebuild();
       },
       onChanged: (path) => {
         this.pending.add(path);
@@ -48,9 +50,11 @@ export class VaultIndexer {
       },
       onDeleted: (path) => {
         this.store.remove(path);
+        this.store.setIngestWarnings(path, []); // 行与摄取警告同生命周期：文件删除即清除
       },
       onRenamed: (oldPath, newPath) => {
         this.store.remove(oldPath);
+        this.store.setIngestWarnings(oldPath, []);
         if (newPath.toLowerCase().endsWith(".md")) {
           this.pending.add(newPath);
           this.scheduleFlush();
@@ -70,20 +74,33 @@ export class VaultIndexer {
     this.disposer = null;
   }
 
-  /** 全量重建（首扫 / resolved 回落）。 */
+  /** 全量重建（首扫 / resolved 回落）：重复键文件命中即跳过 upsert，无剔除窗口期。 */
   async fullRebuild(): Promise<void> {
-    const files = await this.vault.listMarkdownFiles();
-    const rows = [];
-    for (const file of files) {
-      const [frontmatter, outlinks, inlinks] = await Promise.all([
-        this.vault.readFrontmatter(file.path),
-        this.vault.getOutlinks(file.path),
-        this.vault.getInlinks(file.path),
-      ]);
-      rows.push(buildRow(file, frontmatter, outlinks, inlinks));
+    this.rebuilding = true;
+    try {
+      const files = await this.vault.listMarkdownFiles();
+      const rows = [];
+      for (const file of files) {
+        const [frontmatter, outlinks, inlinks, text] = await Promise.all([
+          this.vault.readFrontmatter(file.path),
+          this.vault.getOutlinks(file.path),
+          this.vault.getInlinks(file.path),
+          this.vault.readText(file.path),
+        ]);
+        const findings = text === null ? [] : findDuplicateKeys(text);
+        if (findings.length > 0) {
+          // 命中重复键：不入行仓库（并清理上一轮可能的遗留行），只归档警告
+          this.store.remove(file.path);
+          this.store.setIngestWarnings(file.path, this.toIngestWarnings(file.path, findings));
+          continue;
+        }
+        this.store.setIngestWarnings(file.path, []);
+        rows.push(buildRow(file, frontmatter, outlinks, inlinks));
+      }
+      this.store.upsertMany(rows);
+    } finally {
+      this.rebuilding = false;
     }
-    this.store.upsertMany(rows);
-    await Promise.all(files.map((file) => this.checkDuplicateKeys(file.path)));
   }
 
   /** 防抖窗口结束：把挂起的路径逐个重算。 */
@@ -125,15 +142,17 @@ export class VaultIndexer {
       return;
     }
     this.store.remove(path);
-    this.store.setIngestWarnings(
-      path,
-      findings.map((f) => ({
-        type: "duplicateKey",
-        file: path,
-        field: f.field,
-        message: `文件 "${path}" frontmatter 存在重复键 "${f.field}"，已从结果集中剔除`,
-        rawLines: f.rawLines,
-      })),
-    );
+    this.store.setIngestWarnings(path, this.toIngestWarnings(path, findings));
+  }
+
+  /** 重复键发现 → 摄取警告档案（fullRebuild 与增量 flush 共用）。 */
+  private toIngestWarnings(path: string, findings: DuplicateKeyFinding[]): IngestWarning[] {
+    return findings.map((f) => ({
+      type: "duplicateKey",
+      file: path,
+      field: f.field,
+      message: `文件 "${path}" frontmatter 存在重复键 "${f.field}"，已从结果集中剔除`,
+      rawLines: f.rawLines,
+    }));
   }
 }

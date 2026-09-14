@@ -55,10 +55,9 @@ export const KEYWORDS = new Set([
 /** DSQL 1.4：聚合关键词（仅 SELECT 项合法，parser 单独拦截，不入 KEYWORDS 以免其他子句误吞） */
 export const AGG_KEYWORDS = new Set(["TOTAL"]);
 
-/** 内置函数名表（词法层校验用，函数名约定小写） */
-export const FUNCTIONS = new Set([
-  "sqrt", "cbrt", "root", "contains", "length", "lower", "upper", "empty",
-]);
+/** 内置函数名表：单一事实源在 functions.ts 的 FUNCTIONS 实现表（约定小写） */
+import { FUNCTION_NAMES as FUNCTIONS } from "./functions";
+export { FUNCTIONS };
 
 /** 运算符表（按长度降序匹配，%%%（取模）与单字符运算符共存） */
 const OPS = [
@@ -111,6 +110,9 @@ export class Lexer {
     if (ch === "$") {
       const variable = this.tryReadVariable(line, col);
       if (variable) return variable;
+      // `$` 开头但不成合法变量名（名字非法 / 未闭合）→ 显式报错，
+      // 不回退 ident 路径（否则 `$a b$` 会被静默拆成两个怪字段名）
+      throw new LexError("非法变量名（$ 与 $ 之间应为标识符，如 $总成绩$）", line, col);
     }
     if (IDENT_START.test(ch)) return this.readIdent(line, col);
     return this.readPunct(line, col);
@@ -304,6 +306,8 @@ export class Lexer {
     }
     if (i >= start && this.src[i] === "$") {
       const name = this.src.slice(start, i);
+      // VARIABLE = "$" ident "$"（§2）：名字须为合法 ident，否则回退 ident 路径自然报错
+      if (!/^[\p{L}_$][\p{L}\p{N}_$.]*$/u.test(name)) return null;
       this.pos = i + 1;
       this.col += i + 1 - start + 1;
       return { type: "variable", value: name, line, col };

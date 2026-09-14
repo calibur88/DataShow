@@ -302,4 +302,35 @@ test("sqrt(0) 与除零链式求值", () => {
   assert.equal(evalOne(`分 %/% (分 %-% 95)`), null); // 除零 → null（非致命）
 });
 
+test("算术结果非有限数 → null + warning（%/% %*% 与 %^% 口径一致，§6.3 ⑥）", () => {
+  const data = [makeRow("M/x.md", "M", { 大: 1e308, 小: 1e-308 })];
+  const warns: { type: string; message: string }[] = [];
+  const warn = (message: string, type = "语义"): void => { warns.push({ type, message }); };
+  const evalWithWarn = (sql: string): unknown => {
+    warns.length = 0;
+    const r = executeQuery(parseQuery(`**SELECT** ${sql} **AS** v **FROM** "M"`), data, null);
+    return evaluateExpr(r.columns[0].expr, r.rows[0], null, undefined, warn);
+  };
+  assert.equal(evalWithWarn(`大 %/% 小`), null);   // 1e308 / 1e-308 = Infinity → null
+  assert.equal(warns.length, 1);
+  assert.equal(evalWithWarn(`大 %*% 大`), null);   // 1e308 * 1e308 = Infinity → null
+  assert.equal(warns.length, 1);
+  assert.equal(evalWithWarn(`大 %^% 大`), null);   // 乘方守卫（原有行为不回归）
+});
+
+test("一元正负号仅作用于数值：数字串 → null 不计 warning（§6.3 定稿）", () => {
+  const data = [makeRow("M/x.md", "M", { s: "5", n: 5 })];
+  const warns: { type: string; message: string }[] = [];
+  const warn = (message: string, type = "语义"): void => { warns.push({ type, message }); };
+  const evalWithWarn = (sql: string): unknown => {
+    warns.length = 0;
+    const r = executeQuery(parseQuery(`**SELECT** ${sql} **AS** v **FROM** "M"`), data, null);
+    return evaluateExpr(r.columns[0].expr, r.rows[0], null, undefined, warn);
+  };
+  assert.equal(evalWithWarn(`%-%n`), -5);          // 数值照常
+  assert.equal(evalWithWarn(`%-%s`), null);        // 数字串 → null
+  assert.equal(warns.length, 0);                   // 不计 warning
+  assert.equal(evalWithWarn(`%+%n`), 5);
+});
+
 console.log(`\n数学示例测试：全部 ${passed} 个通过`);

@@ -2,7 +2,7 @@
  * @module index/body
  * @description 正文抽取（SEARCH 用，纯函数）：md 剥 frontmatter、非 md 剥围栏块
  *
- * body 只在查询含 SEARCH 时按需读取，随行临时携带、不缓存不常驻（规范 §6.1）：
+ * body 只在查询含 SEARCH 时按需读取，随行临时携带、不缓存不常驻（规范 §6.10）：
  * - md：有 frontmatter → text.slice(frontmatterPosition.end.offset)，去掉一个前导 \n
  *   （它是 frontmatter 与 body 的分隔符，不属 body）；无 frontmatter → body = 全文，
  *   不去前导 \n；其余字符原样保留，不 trim，末尾 \n 不规范化；

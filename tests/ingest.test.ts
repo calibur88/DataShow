@@ -82,4 +82,11 @@ test("重复键文件从结果集剔除，duplicateKey 计入 warnings，查询�
   assert.match(w.message, /重复键 "age"/);
 });
 
+test("YAML 顶层列表项不判重复键（- 键: 值 是列表项，不是顶层键）", () => {
+  assert.deepEqual(findDuplicateKeys("---\n- a: 1\n- a: 2\n---\n"), []);
+  assert.deepEqual(findDuplicateKeys("---\nitems:\n  - a: 1\n  - a: 2\n---\n"), []);
+  // 真重复键检测不回归
+  assert.equal(findDuplicateKeys("---\nage: 20\nage: 22\n---\n").length, 1);
+});
+
 console.log(`\n摄取层测试：全部 ${passed} 个通过`);

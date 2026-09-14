@@ -261,12 +261,13 @@ export function createPanelController(
       // 随行临时携带、不缓存；无 SEARCH → 零 body 读取
       const parsed = query;
       let bodies: Map<string, string> | undefined;
+      const allRows = deps.rows.all(); // 复用同一次快照（store.all() 每次都是排序拷贝）
       if (parsed.search !== null) {
-        const mdRows = deps.rows.all().filter((row) => matchSource(parsed.from, row));
+        const mdRows = allRows.filter((row) => matchSource(parsed.from, row));
         bodies = await loadBodies([...mdRows, ...extRows], deps.extSource);
         if (runId !== resultRun) return;
       }
-      result = executeQuery(query, deps.rows.all(), null, {
+      result = executeQuery(query, allRows, null, {
         debug: deps.settings().showDebug,
         // DSQL 1.5：摄取期容错警告（如重复键剔除的文件）随调试信息输出
         ingestWarnings: deps.rows.ingestWarnings(),
@@ -285,7 +286,7 @@ export function createPanelController(
     const btnDebug = hasDebug
       ? tabs.createEl("button", { cls: "datashow-tabs__tab", text: "调试信息" })
       : null;
-    resultTab = "result";
+    if (!keepTab) resultTab = "result";
 
     const renderPane = (): void => {
       content.empty();

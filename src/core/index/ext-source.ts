@@ -69,8 +69,10 @@ export function failedListForRender(failed: string[], limit: number): { shown: s
  */
 export async function loadBodies(rows: DataRow[], host: ExtSourceHost): Promise<Map<string, string>> {
   const bodies = new Map<string, string>();
-  for (const row of rows) {
-    const raw = await host.readBody(row.path);
+  const loaded = await Promise.all(
+    rows.map(async (row) => ({ row, raw: await host.readBody(row.path) })),
+  );
+  for (const { row, raw } of loaded) {
     if (raw === null) continue;
     bodies.set(
       row.path,

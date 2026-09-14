@@ -1,11 +1,12 @@
 /**
  * @module dsql/executor
- * @description DSQL 执行器：按 FROM → [ext] 行并入 → 聚合遍（TOTAL）→ SEARCH → WHERE → SORT → LIMIT → SELECT 管线执行查询
+ * @description DSQL 执行器：按 FROM → [ext] 行并入 → SEARCH 正文抽取 → 聚合遍（TOTAL）→ WHERE → COUNT → SORT → LIMIT → SELECT 管线执行查询
  *
- * 两遍执行模型：FROM 源解析后，[ext] 行按 path 去重并入（调用方按 FROM 范围预读），
+ * 两遍执行模型：FROM 源解析后，[ext] 行按 path 去重并入（调用方按 FROM 范围预读）；
+ * SEARCH 正文抽取在聚合遍之前（TOTAL 可聚合数值抽取字段，DSQL 2.3 起）；
  * 第一遍聚合遍（FROM 全量命中行——含 [ext] 非 md 行，**忽略 WHERE**，计算 **TOTAL** → 变量表）；
- * 第二遍投影遍（SEARCH 正文抽取 → WHERE → SORT → LIMIT → SELECT 投影，
- * $变量$ 查变量表、裸标识符查行字段；SEARCH 抽取字段在聚合遍之后，TOTAL 不可见）。
+ * 第二遍投影遍（WHERE → **COUNT** → SORT → LIMIT → SELECT 投影，
+ * $变量$ 查变量表、裸标识符查行字段）。
  * 语义：类型不匹配/除零/缺字段为非致命（求值 null，计入 warnings）；算术 / 比较做
  * Number() 隐式转换（非原始值守卫在前，见 §6.3 补丁）；排序 UTF-8 字节序确定性方案。
  * 视图关键词仅透传 ResultSet.view，不影响数据管线（TABLE_VIEW / LIST_VIEW / CARD_VIEW）。
@@ -90,6 +91,29 @@ export interface ExecuteOptions {
   bodies?: Map<string, string>;
 }
 
+/** 执行管线共享状态：各 stage 函数按顺序读写，executeQuery 为唯一编排者 */
+interface ExecState {
+  readonly q: Query;
+  readonly ctx: DataRow | null;
+  readonly opts: ExecuteOptions;
+  readonly enabled: boolean;
+  readonly missing: Map<string, FieldMiss>;
+  readonly warnCounts: Map<string, { type: string; count: number }>;
+  readonly track?: FieldTracker;
+  readonly warn?: WarnSink;
+  matched: DataRow[];
+  /** FROM 阶段产物 */
+  fromMsg: string;
+  sourceStats: SourceStat[];
+  extMerged: number;
+  /** SEARCH 阶段产物（抽取前原始字段名并集缓存 + 别名清单） */
+  fieldNames: Set<string> | null;
+  searchAliases: string[];
+  searchMsg: string | null;
+  /** 聚合 / 计数填充的变量表 */
+  globals: Map<string, FieldValue> | null;
+}
+
 /**
  * 执行查询。ctx 为 this 上下文（当前笔记行，看板面板场景为 null）。
  *
@@ -106,6 +130,63 @@ export function executeQuery(
   opts: ExecuteOptions = {},
 ): ResultSet {
   const started = now();
+  const state = createState(q, ctx, opts);
+
+  stageFrom(state, rows);
+  const searchStats = stageSearch(state);
+  checkSelectAliases(state);
+  const aggMsgs = stageAggregate(state);
+  const whereMsg = stageWhere(state);
+  const countMsgs = stageCount(state);
+  const sortMsg = stageSort(state);
+  const limitMsg = stageLimit(state);
+
+  // ---- SELECT 投影 ----
+  const columns = resolveColumns(q.select, state.matched, state.globals);
+  // SELECT 仅含槽位 / TOTAL 项（且至少有一个 TOTAL）→ 单行合成结果（行字段为空，文件名"汇总"）
+  const onlyFillers = q.select !== "*" && q.select.every((s) => s.total || s.slot);
+  const hasTotal = q.select !== "*" && q.select.some((s) => s.total);
+  if (hasTotal && onlyFillers) {
+    state.matched = [SYNTH_ROW];
+  }
+
+  const result: ResultSet = { view: q.view, columns, rows: state.matched, globals: state.globals };
+  if (state.enabled) {
+    const warnings: QueryWarning[] = [...state.warnCounts.entries()].map(([msg, rec]) => ({
+      type: rec.type,
+      message: rec.count > 1 ? `${msg}（${rec.count} 次）` : msg,
+    }));
+    for (const w of state.opts.ingestWarnings ?? []) warnings.push(w);
+    result.debug = {
+      from: state.fromMsg,
+      where: whereMsg,
+      sort: sortMsg,
+      limit: limitMsg,
+      fieldMisses: [...state.missing.values()],
+      warnings,
+      sourceStats: state.sourceStats,
+      aggregates: aggMsgs,
+      search: searchStats ?? [],
+      count: countMsgs,
+      executionTimeMs: round1(now() - started),
+    };
+  }
+  return result;
+}
+
+/** TOTAL-only 查询的单行合成结果 */
+const SYNTH_ROW: DataRow = {
+  path: "",
+  file: { path: "", name: "汇总", folder: "", ext: "md", size: 0, ctime: 0, mtime: 0, outlinks: [], inlinks: [] },
+  fields: {},
+};
+
+/** file.* 内置字段名（SEARCH 别名 prepare 期冲突检查用） */
+const FILE_KEYS = new Set(["path", "name", "folder", "ext", "size", "ctime", "mtime", "outlinks", "inlinks"]);
+
+/* ---------- 管线阶段 ---------- */
+
+function createState(q: Query, ctx: DataRow | null, opts: ExecuteOptions): ExecState {
   const enabled = opts.debug === true;
   const missing = new Map<string, FieldMiss>();
   const warnCounts = new Map<string, { type: string; count: number }>();
@@ -126,208 +207,199 @@ export function executeQuery(
         warnCounts.set(msg, rec);
       }
     : undefined;
-
-  // ---- FROM（含逐源统计） ----
-  let matched = rows.filter((row) => matchSource(q.from, row));
-
-  // ---- [ext] 文件级行并入（聚合遍之前 → TOTAL 含非 md 行；WHERE 之前 → 行级过滤覆盖之） ----
-  let extMerged = 0;
-  if (opts.extRows && opts.extRows.length > 0) {
-    const seen = new Set(matched.map((row) => row.path));
-    for (const row of opts.extRows) {
-      if (!seen.has(row.path) && matchSource(q.from, row)) {
-        seen.add(row.path);
-        matched.push(row);
-        extMerged++;
-      }
-    }
-  }
-
-  const sourceStats: SourceStat[] | null = enabled ? collectSourceStats(q.from, matched) : null;
-  const fromMsg = `输入 ${rows.length} 行 → 命中 ${matched.length} 行` +
-    (enabled && extMerged > 0 ? `（含 [ext] 并入 ${extMerged} 行）` : "");
-
-  // ---- SEARCH（DSQL 2.2：正文抽取，在聚合遍之前——TOTAL 可聚合数值抽取字段，WHERE / SORT 才能用） ----
-  const searchStats: SearchStat[] | null =
-    q.search && q.search.length > 0
-      ? q.search.map((item) => ({ alias: item.alias, pattern: item.pattern, hits: 0, misses: 0, samples: [] }))
-      : null;
-  let searchMsg: string | null = null;
-  if (q.search && q.search.length > 0) {
-    // prepare 期冲突（FROM 元数据收集后、抽取前）：frontmatter 字段名并集 + file.* 内置字段。
-    // 行列号在 parse 期记录进 AST（SELECT / SEARCH 别名冲突才是 parse 期）。
-    const fieldNames = new Set<string>();
-    for (const row of matched) for (const k of Object.keys(row.fields)) fieldNames.add(k);
-    for (const item of q.search) {
-      if (fieldNames.has(item.alias) || FILE_KEYS.has(item.alias) || item.alias.startsWith("file.")) {
-        throw new Error(
-          `[DSQL] 第 ${item.line} 行第 ${item.col} 列：SEARCH 别名 '${item.alias}' 与现有字段名冲突，请改用其他别名`,
-        );
-      }
-    }
-    matched = matched.map((row) => {
-      const fields = { ...row.fields }; // 克隆：SEARCH 字段不写回行仓库
-      for (let i = 0; i < q.search!.length; i++) {
-        const item = q.search![i];
-        const body = opts.bodies?.get(row.path);
-        let value: FieldValue = null; // 无 body / 无匹配 → null（不是 empty 值，不是 ""）
-        if (body !== undefined) {
-          const m = item.regex.exec(body); // exec 天然只返回首个匹配
-          if (m !== null) {
-            value = m[1] !== undefined ? m[1] : m[0]; // 有捕获组取 m[1]，未匹配/无捕获组回落 m[0]
-            fields[item.alias] = value; // 原始字符串，逐字符保留，不做类型推断
-            searchStats![i].hits++;
-            if (searchStats![i].samples.length < 3) searchStats![i].samples.push(value);
-            continue;
-          }
-        }
-        fields[item.alias] = null;
-        searchStats![i].misses++;
-      }
-      return { ...row, fields };
-    });
-    if (enabled) {
-      const hits = searchStats!.reduce((sum, s) => sum + s.hits, 0);
-      const misses = searchStats!.reduce((sum, s) => sum + s.misses, 0);
-      searchMsg = `${q.search.length} 个模板 × ${matched.length} 行：命中 ${hits}，未命中 ${misses}`;
-    }
-  }
-
-  // ---- 别名唯一性行字段冲突校验（DSQL 1.5：聚合遍开始前；裸槽位仅填充不投影，不参与判定） ----
-  // 判定范围 = FROM 全量命中行的字段名并集，任一行出现过该字段名即冲突 → 致命错误
-  const aliasedItems = q.select === "*" ? [] : q.select.filter((c) => c.alias && !c.slot);
-  if (aliasedItems.length > 0) {
-    const fieldNames = new Set<string>();
-    for (const row of matched) for (const k of Object.keys(row.fields)) fieldNames.add(k);
-    for (const item of aliasedItems) {
-      if (fieldNames.has(item.alias!)) {
-        throw new Error(`[DSQL] 别名 '$${item.alias}$' 与现有字段名冲突，请改用其他别名`);
-      }
-    }
-  }
-
-  // ---- 聚合遍（DSQL 1.4：恒忽略 WHERE，扫描 FROM 全量命中行） ----
-  const totalItems = q.select === "*" ? [] : q.select.filter((c) => c.total);
-  let globals: Map<string, FieldValue> | null = null;
-  const aggMsgs: string[] = [];
-  if (totalItems.length > 0) {
-    globals = new Map();
-    for (const item of totalItems) {
-      const alias = item.alias!;
-      let value = null;
-      if (matched.length === 0) {
-        warn?.("**TOTAL** 空表（FROM 命中 0 行），返回 null", "TOTAL");
-      } else if (item.expr.kind === "lit" && typeof item.expr.value === "number") {
-        value = item.expr.value * matched.length; // TOTAL 1 → 总行数；TOTAL 0 → 0
-      } else {
-        let sum = null;
-        let skipped = 0;
-        for (const row of matched) {
-          const v = evaluateExpr(item.expr, row, ctx, track, warn);
-          if (typeof v === "number") sum = (sum ?? 0) + v;
-          else if (v != null) skipped++;
-        }
-        if (sum == null) {
-          warn?.(`**TOTAL** ${item.alias} 无数值可累加（字段缺失或全为非数值），返回 null`, "TOTAL");
-        } else {
-          value = sum;
-          if (skipped > 0) warn?.(`**TOTAL** ${item.alias} 跳过 ${skipped} 个非数值行`, "TOTAL");
-        }
-      }
-      globals.set(alias, value);
-      aggMsgs.push(`${alias} = ${value === null ? "null" : value}`);
-    }
-  }
-
-  // ---- WHERE ----
-  let whereMsg: string | null = null;
-  if (q.where) {
-    const before = matched;
-    matched = matched.filter((row) => truthy(evaluateExpr(q.where!, row, ctx, track, warn)));
-    if (enabled) {
-      const excluded = before.filter((r) => !matched.includes(r)).slice(0, 3).map((r) => r.path);
-      whereMsg = `过滤 ${before.length} → ${matched.length} 行` +
-        (excluded.length ? `（剔除示例：${excluded.join(", ")}）` : "");
-    }
-  }
-
-  // ---- COUNT（DSQL 2.3：WHERE 过滤后行集上的显式比较计数，填充槽位；无 WHERE 时 = FROM 全量口径） ----
-  const countMsgs: string[] = [];
-  if (q.count && q.count.length > 0) {
-    globals ??= new Map();
-    for (const item of q.count) {
-      let n = 0;
-      for (const row of matched) {
-        if (truthy(evaluateExpr(item.cmp, row, ctx, track, warn))) n++;
-      }
-      globals.set(item.slot, n);
-      if (enabled) {
-        countMsgs.push(`${item.slot} = ${n}（${q.where ? "WHERE 过滤后行集" : "FROM 全量口径"}）`);
-      }
-    }
-  }
-
-  // ---- SORT ----
-  let sortMsg: string | null = null;
-  if (q.sort && q.sort.keys.length > 0) {
-    let comparisons = 0;
-    if (enabled && q.sort.keys.some((k) => k.priority?.length === 0)) {
-      warn?.("**SORT** **BY** 空优先级列表（视为无自定义优先级）", "SORT");
-    }
-    matched = sortRows(matched, q.sort, ctx, track, enabled ? () => comparisons++ : undefined);
-    if (enabled) sortMsg = `${describeSort(q.sort)}，比较 ${comparisons} 次`;
-  }
-
-  // ---- LIMIT ----
-  let limitMsg: string | null = null;
-  if (q.limit != null) {
-    const before = matched.length;
-    matched = matched.slice(0, q.limit);
-    if (enabled) limitMsg = `截断 ${before} → ${matched.length} 行`;
-  }
-
-  // ---- SELECT 投影 ----
-  const columns = resolveColumns(q.select, matched, globals);
-
-  // SELECT 仅含槽位 / TOTAL 项（且至少有一个 TOTAL）→ 单行合成结果（行字段为空，文件名"汇总"）
-  const onlyFillers = q.select !== "*" && q.select.every((s) => s.total || s.slot);
-  if (totalItems.length > 0 && onlyFillers) {
-    matched = [SYNTH_ROW];
-  }
-
-  const result: ResultSet = { view: q.view, columns, rows: matched, globals };
-  if (enabled) {
-    const warnings: QueryWarning[] = [...warnCounts.entries()].map(([msg, rec]) => ({
-      type: rec.type,
-      message: rec.count > 1 ? `${msg}（${rec.count} 次）` : msg,
-    }));
-    for (const w of opts.ingestWarnings ?? []) warnings.push(w);
-    result.debug = {
-      from: fromMsg,
-      where: whereMsg,
-      sort: sortMsg,
-      limit: limitMsg,
-      fieldMisses: [...missing.values()],
-      warnings,
-      sourceStats: sourceStats ?? [],
-      aggregates: aggMsgs,
-      search: searchStats ?? [],
-      count: countMsgs,
-      executionTimeMs: round1(now() - started),
-    };
-  }
-  return result;
+  return {
+    q, ctx, opts, enabled, missing, warnCounts, track, warn,
+    matched: [], fromMsg: "", sourceStats: [], extMerged: 0,
+    fieldNames: null, searchAliases: [], searchMsg: null, globals: null,
+  };
 }
 
-/** TOTAL-only 查询的单行合成结果 */
-const SYNTH_ROW: DataRow = {
-  path: "",
-  file: { path: "", name: "汇总", folder: "", ext: "md", size: 0, ctime: 0, mtime: 0, outlinks: [], inlinks: [] },
-  fields: {},
-};
+/** FROM 源解析 + [ext] 文件级行并入（聚合遍之前 → TOTAL 含非 md 行；WHERE 之前 → 行级过滤覆盖之） */
+function stageFrom(state: ExecState, rows: DataRow[]): void {
+  let matched = rows.filter((row) => matchSource(state.q.from, row));
+  if (state.opts.extRows && state.opts.extRows.length > 0) {
+    const seen = new Set(matched.map((row) => row.path));
+    for (const row of state.opts.extRows) {
+      if (!seen.has(row.path) && matchSource(state.q.from, row)) {
+        seen.add(row.path);
+        matched.push(row);
+        state.extMerged++;
+      }
+    }
+  }
+  state.matched = matched;
+  state.sourceStats = state.enabled ? collectSourceStats(state.q.from, matched) : [];
+  state.fromMsg = `输入 ${rows.length} 行 → 命中 ${matched.length} 行` +
+    (state.enabled && state.extMerged > 0 ? `（含 [ext] 并入 ${state.extMerged} 行）` : "");
+}
 
-/** file.* 内置字段名（SEARCH 别名 prepare 期冲突检查用） */
-const FILE_KEYS = new Set(["path", "name", "folder", "ext", "size", "ctime", "mtime", "outlinks", "inlinks"]);
+/** FROM 命中行的原始字段名并集（SEARCH 冲突检查与别名唯一性校验共享，单次构建） */
+function rawFieldNames(state: ExecState): Set<string> {
+  if (state.fieldNames === null) {
+    const names = new Set<string>();
+    for (const row of state.matched) for (const k of Object.keys(row.fields)) names.add(k);
+    state.fieldNames = names;
+  }
+  return state.fieldNames;
+}
+
+/**
+ * SEARCH（DSQL 2.2：正文抽取，在聚合遍之前——TOTAL 可聚合数值抽取字段，WHERE / SORT 才能用）。
+ * prepare 期冲突（FROM 元数据收集后、抽取前）：frontmatter 字段名并集 + file.* 内置字段；
+ * 行列号在 parse 期记录进 AST（SELECT / SEARCH 别名冲突才是 parse 期）。
+ */
+function stageSearch(state: ExecState): SearchStat[] | null {
+  const { q } = state;
+  if (!q.search || q.search.length === 0) return null;
+
+  const fieldNames = rawFieldNames(state);
+  for (const item of q.search) {
+    if (fieldNames.has(item.alias) || FILE_KEYS.has(item.alias) || item.alias.startsWith("file.")) {
+      throw new Error(
+        `[DSQL] 第 ${item.line} 行第 ${item.col} 列：SEARCH 别名 '${item.alias}' 与现有字段名冲突，请改用其他别名`,
+      );
+    }
+  }
+  state.searchAliases = q.search.map((item) => item.alias);
+
+  const stats = q.search.map((item) => ({ alias: item.alias, pattern: item.pattern, hits: 0, misses: 0, samples: [] as string[] }));
+  state.matched = state.matched.map((row) => {
+    const fields = { ...row.fields }; // 克隆：SEARCH 字段不写回行仓库
+    for (let i = 0; i < q.search!.length; i++) {
+      const item = q.search![i];
+      const body = state.opts.bodies?.get(row.path);
+      let value: FieldValue = null; // 无 body / 无匹配 → null（不是 empty 值，不是 ""）
+      if (body !== undefined) {
+        const m = item.regex.exec(body); // exec 天然只返回首个匹配
+        if (m !== null) {
+          value = m[1] !== undefined ? m[1] : m[0]; // 有捕获组取 m[1]，未匹配/无捕获组回落 m[0]
+          fields[item.alias] = value; // 原始字符串，逐字符保留，不做类型推断
+          stats[i].hits++;
+          if (stats[i].samples.length < 3) stats[i].samples.push(value);
+          continue;
+        }
+      }
+      fields[item.alias] = null;
+      stats[i].misses++;
+    }
+    return { ...row, fields };
+  });
+
+  if (state.enabled) {
+    const hits = stats.reduce((sum, s) => sum + s.hits, 0);
+    const misses = stats.reduce((sum, s) => sum + s.misses, 0);
+    state.searchMsg = `${q.search.length} 个模板 × ${state.matched.length} 行：命中 ${hits}，未命中 ${misses}`;
+  }
+  return stats;
+}
+
+/** 别名唯一性行字段冲突校验（DSQL 1.5：聚合遍开始前；裸槽位仅填充不投影，不参与判定）。
+ *  判定范围 = FROM 全量命中行的字段名并集（SEARCH 已把别名挂进行字段，一并计入），
+ *  任一行出现过该字段名即冲突 → 致命错误。 */
+function checkSelectAliases(state: ExecState): void {
+  const { q } = state;
+  const aliasedItems = q.select === "*" ? [] : q.select.filter((c) => c.alias && !c.slot);
+  if (aliasedItems.length === 0) return;
+  const fieldNames = new Set(rawFieldNames(state));
+  for (const alias of state.searchAliases) fieldNames.add(alias);
+  for (const item of aliasedItems) {
+    if (fieldNames.has(item.alias!)) {
+      throw new Error(`[DSQL] 别名 '$${item.alias}$' 与现有字段名冲突，请改用其他别名`);
+    }
+  }
+}
+
+/** 聚合遍（DSQL 1.4：恒忽略 WHERE，扫描 FROM 全量命中行） */
+function stageAggregate(state: ExecState): string[] {
+  const aggMsgs: string[] = [];
+  const totalItems = state.q.select === "*" ? [] : state.q.select.filter((c) => c.total);
+  if (totalItems.length === 0) return aggMsgs;
+
+  state.globals = new Map();
+  for (const item of totalItems) {
+    const alias = item.alias!;
+    let value = null;
+    if (state.matched.length === 0) {
+      state.warn?.("**TOTAL** 空表（FROM 命中 0 行），返回 null", "TOTAL");
+    } else if (item.expr.kind === "lit" && typeof item.expr.value === "number") {
+      value = item.expr.value * state.matched.length; // TOTAL 1 → 总行数；TOTAL 0 → 0
+    } else {
+      let sum = null;
+      let skipped = 0;
+      for (const row of state.matched) {
+        const v = evaluateExpr(item.expr, row, state.ctx, state.track, state.warn);
+        if (typeof v === "number") sum = (sum ?? 0) + v;
+        else if (v != null) skipped++;
+      }
+      if (sum == null) {
+        state.warn?.(`**TOTAL** ${alias} 无数值可累加（字段缺失或全为非数值），返回 null`, "TOTAL");
+      } else {
+        value = sum;
+        if (skipped > 0) state.warn?.(`**TOTAL** ${alias} 跳过 ${skipped} 个非数值行`, "TOTAL");
+      }
+    }
+    state.globals.set(alias, value);
+    aggMsgs.push(`${alias} = ${value === null ? "null" : value}`);
+  }
+  return aggMsgs;
+}
+
+/** WHERE 行过滤（debug 时边过滤边收集剔除示例，避免 O(n²) 的 includes 回扫） */
+function stageWhere(state: ExecState): string | null {
+  const where = state.q.where;
+  if (!where) return null;
+
+  const before = state.matched.length;
+  const excluded: string[] = [];
+  state.matched = state.matched.filter((row) => {
+    const ok = truthy(evaluateExpr(where, row, state.ctx, state.track, state.warn));
+    if (state.enabled && !ok && excluded.length < 3) excluded.push(row.path);
+    return ok;
+  });
+  if (!state.enabled) return null;
+  return `过滤 ${before} → ${state.matched.length} 行` +
+    (excluded.length ? `（剔除示例：${excluded.join(", ")}）` : "");
+}
+
+/** COUNT（DSQL 2.3：WHERE 过滤后行集上的显式比较计数，填充槽位；无 WHERE 时 = FROM 全量口径） */
+function stageCount(state: ExecState): string[] {
+  const countMsgs: string[] = [];
+  if (!state.q.count || state.q.count.length === 0) return countMsgs;
+
+  state.globals ??= new Map();
+  for (const item of state.q.count) {
+    let n = 0;
+    for (const row of state.matched) {
+      if (truthy(evaluateExpr(item.cmp, row, state.ctx, state.track, state.warn))) n++;
+    }
+    state.globals.set(item.slot, n);
+    if (state.enabled) {
+      countMsgs.push(`${item.slot} = ${n}（${state.q.where ? "WHERE 过滤后行集" : "FROM 全量口径"}）`);
+    }
+  }
+  return countMsgs;
+}
+
+/** SORT 多级排序（空优先级列表 () 视为无自定义优先级并计入 warnings） */
+function stageSort(state: ExecState): string | null {
+  const sort = state.q.sort;
+  if (!sort || sort.keys.length === 0) return null;
+
+  let comparisons = 0;
+  if (state.enabled && sort.keys.some((k) => k.priority?.length === 0)) {
+    state.warn?.("**SORT** **BY** 空优先级列表（视为无自定义优先级）", "SORT");
+  }
+  state.matched = sortRows(state.matched, sort, state.ctx, state.track, state.enabled ? () => comparisons++ : undefined);
+  return state.enabled ? `${describeSort(sort)}，比较 ${comparisons} 次` : null;
+}
+
+/** LIMIT 截断 */
+function stageLimit(state: ExecState): string | null {
+  if (state.q.limit == null) return null;
+  const before = state.matched.length;
+  state.matched = state.matched.slice(0, state.q.limit);
+  return state.enabled ? `截断 ${before} → ${state.matched.length} 行` : null;
+}
 
 /* ---------- SELECT 列 ---------- */
 
@@ -409,22 +481,14 @@ export function evaluateExpr(
     }
     case "call": {
       const args = expr.args.map((a) => evaluateExpr(a, row, ctx, track, warn, vars));
-      try {
-        // empty() 是唯一能看见 empty 值的运算；其余函数收到的 empty 值已按 null 传播
-        return callFunction(expr.name, expr.name === "empty" ? args : args.map(stripEmpty));
-      } catch {
-        warn?.(`未知函数 ${expr.name}()`, "未知函数");
-        return null; // 非致命
-      }
+      // 未知函数在词法层拦截（lexer/parser 只放行 FUNCTIONS 表内名字），此处无需兜底
+      return callFunction(expr.name, expr.name === "empty" ? args : args.map(stripEmpty));
     }
     case "unary": {
       if (expr.op === "not") return !truthy(evaluateExpr(expr.expr, row, ctx, track, warn, vars));
+      // 一元正负号仅作用于数值（§6.3）：非数值 → null，不计 warning
       const v = stripEmpty(evaluateExpr(expr.expr, row, ctx, track, warn, vars));
-      if (typeof v !== "number") {
-        warn?.("一元正负号作用于非数字", "类型不匹配");
-        return null;
-      }
-      return expr.op === "-" ? -v : v;
+      return typeof v === "number" ? (expr.op === "-" ? -v : v) : null;
     }
     case "binary":
       return evalBinary(expr.op, expr.left, expr.right, row, ctx, track, warn, vars);
@@ -482,25 +546,37 @@ function evalBinary(
         warn?.(`算术运算 %${op}% 作用于非数字`, "类型不匹配");
         return null;
       }
-      switch (op) {
-        case "+": return ln + rn;
-        case "-": return ln - rn;
-        case "*": return ln * rn;
-        case "/":
-          if (rn === 0) { warn?.("%/% 除零", "除零"); return null; }
-          return ln / rn;
-        case "%":
-          if (rn === 0) { warn?.("%%% 取模零", "除零"); return null; }
-          return ln % rn;
-        case "^": {
-          const p = Math.pow(ln, rn);
-          if (!Number.isFinite(p)) { warn?.("%^% 结果非有限数（如负数开偶次方）", "类型不匹配"); return null; }
-          return p;
-        }
-      }
+      return applyArithmetic(op, ln, rn, warn);
     }
   }
   return null;
+}
+
+/** 算术求值：除零 / 取模零 → null；结果非有限数（NaN / ±Infinity）→ null（计入 warnings）。 */
+function applyArithmetic(op: "+" | "-" | "*" | "/" | "%" | "^", ln: number, rn: number, warn?: WarnSink): FieldValue {
+  const fin = (n: number): FieldValue => {
+    if (!Number.isFinite(n)) {
+      warn?.(`%${op}% 结果非有限数`, "类型不匹配");
+      return null;
+    }
+    return n;
+  };
+  switch (op) {
+    case "+": return fin(ln + rn);
+    case "-": return fin(ln - rn);
+    case "*": return fin(ln * rn);
+    case "/":
+      if (rn === 0) { warn?.("%/% 除零", "除零"); return null; }
+      return fin(ln / rn);
+    case "%":
+      if (rn === 0) { warn?.("%%% 取模零", "除零"); return null; }
+      return fin(ln % rn);
+    case "^": {
+      const p = Math.pow(ln, rn);
+      if (!Number.isFinite(p)) { warn?.("%^% 结果非有限数（如负数开偶次方）", "类型不匹配"); return null; }
+      return p;
+    }
+  }
 }
 
 /** 非原始值判定（数组；null / 原始类型为原始值）。 */
@@ -612,6 +688,7 @@ const utf8Encoder = new TextEncoder();
  * @returns 负数（a 在前）/ 0（相等）/ 正数（b 在前）
  */
 export function compareUtf8(a: string, b: string): number {
+  if (a === b) return 0; // 同一性快路径：跳过编码分配
   const ba = utf8Encoder.encode(a);
   const bb = utf8Encoder.encode(b);
   const n = Math.min(ba.length, bb.length);
@@ -632,7 +709,7 @@ export const EXT_ALL = Symbol("DSQL:extAll");
 export type ExtFilterState = null | typeof EXT_ALL | Set<string>;
 
 /**
- * 遍历 WHERE AST 收集所有 ExtFilterNode 的读取范围（规范 §4.2）：
+ * 遍历 WHERE AST 收集所有 ExtFilterNode 的读取范围（规范 §6.9）：
  * - 没写任何 [ext] → null（不触发文件级分派，只用行仓库 md 行）；
  * - 至少一个 []   → EXT_ALL（读 FROM 目录下全部文件；与 [txt] 同现时归 ALL）；
  * - 其余          → Set（所有 [ext] 内容的并集，仅用于读取范围；
@@ -744,7 +821,7 @@ function collectSourceStats(source: Source, rows: DataRow[]): SourceStat[] {
 /* ---------- SORT（多级 + 逐键自定义优先级） ---------- */
 
 /**
- * 排序语义（5.4）：
+ * 排序语义（6.4）：
  * - 多级：按键顺序依次比较，前者相等才比后者；
  * - 字符串 UTF-8 字节序（递归下降，短者在前）；数字按数值；布尔 false < true；
  * - null 恒排末尾（无论方向）；
@@ -765,10 +842,7 @@ function sortRows(
   }));
 
   const ranks = sort.keys.map((k) => buildRank(k.priority));
-  const dirOf = (i: number): 1 | -1 => {
-    const d = sort.keys[i].dir ?? sort.dir ?? "asc";
-    return d === "desc" ? -1 : 1;
-  };
+  const dirOf = (i: number): 1 | -1 => (sort.keys[i].dir === "desc" ? -1 : 1);
 
   keyed.sort((a, b) => {
     for (let i = 0; i < a.keys.length; i++) {
@@ -816,8 +890,8 @@ function compareKey(l: FieldValue, r: FieldValue, rank: RankMap, sign: 1 | -1): 
 
 function describeSort(sort: NonNullable<Query["sort"]>): string {
   const keys = sort.keys
-    .map((k, i) => {
-      const dir = k.dir ?? sort.dir ?? "asc";
+    .map((k) => {
+      const dir = k.dir ?? "asc";
       const exprDesc = k.expr.kind === "field" ? k.expr.path : "表达式";
       const prio = k.priority ? `，优先级 [${k.priority.map(stringValue).join(", ")}]` : "";
       return `${exprDesc} ${dir.toUpperCase()}${prio}`;

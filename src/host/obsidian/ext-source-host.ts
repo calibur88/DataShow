@@ -5,22 +5,9 @@
  * 查询级使用：仅在当前查询含 [ext] 时被调用；不缓存、不订阅事件、不进索引器。
  */
 
-import { App, TFile } from "obsidian";
+import { App } from "obsidian";
 import type { IExtSourceHost, IFileMeta } from "../types";
-
-/** TFile → 宿主中立的文件元数据（与 vault-host 的 toMeta 同构） */
-function toMeta(file: TFile): IFileMeta {
-  const folder = file.parent?.path ?? "";
-  return {
-    path: file.path,
-    basename: file.basename,
-    folder: folder === "/" ? "" : folder,
-    ext: file.extension,
-    size: file.stat.size,
-    ctime: file.stat.ctime,
-    mtime: file.stat.mtime,
-  };
-}
+import { toMeta } from "./file-meta";
 
 export class ObsidianExtSourceHost implements IExtSourceHost {
   constructor(private app: App) {}

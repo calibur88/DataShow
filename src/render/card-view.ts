@@ -50,17 +50,17 @@ export function renderCardView(args: CardViewArgs): HTMLElement {
     return wrap;
   }
 
-  // 单一变量表（TOTAL 聚合结果，供派生列取值）
-  const vars = result.globals ? new Map(result.globals) : undefined;
+  // 变量表基准（TOTAL 聚合结果）：每张卡片派生前克隆，链式派生值不跨行泄漏（与表格视图一致）
+  const globals = result.globals;
 
   // 选择分组列：优先「能真正分组」的裸字段列；找不到则降级单列
-  const groupCol = pickGroupColumn(result.columns, result.rows, vars);
+  const groupCol = pickGroupColumn(result.columns, result.rows, globals);
 
   // 按分组值切分列（键 = 格式化后的分组值），保留首次出现顺序
   const groups = new Map<string, DataRow[]>();
   if (groupCol) {
     for (const row of result.rows) {
-      const key = colValue(groupCol, row, vars, decimalPlaces);
+      const key = colValue(groupCol, row, globals, decimalPlaces);
       const arr = groups.get(key);
       if (arr) arr.push(row);
       else groups.set(key, [row]);
@@ -84,7 +84,7 @@ export function renderCardView(args: CardViewArgs): HTMLElement {
     const body = colEl.createDiv({ cls: "datashow-kanban__column-body" });
     for (const row of rows) {
       body.appendChild(
-        buildCard(row, result.columns, groupCol, vars, decimalPlaces, onSaveField, onOpenFile),
+        buildCard(row, result.columns, groupCol, globals, decimalPlaces, onSaveField, onOpenFile),
       );
     }
     colorIdx++;
@@ -98,13 +98,16 @@ function buildCard(
   row: DataRow,
   columns: ResultSet["columns"],
   groupCol: ResultSet["columns"][number] | null,
-  vars: Map<string, FieldValue> | undefined,
+  globals: ReadonlyMap<string, FieldValue> | null,
   decimalPlaces: number,
   onSaveField: (row: DataRow, fieldPath: string, value: FieldValue) => Promise<void>,
   onOpenFile: (row: DataRow) => void,
 ): HTMLElement {
   const card = document.createElement("div");
   card.className = "datashow-card";
+
+  // 每张卡片独立变量环境（全局 TOTAL + 本卡已计算的派生变量，链式派生不跨行泄漏）
+  const vars = globals ? new Map(globals) : undefined;
 
   // 标题：文件名（点击打开笔记）
   const title = card.createDiv({ cls: "datashow-card__title", text: row.file.name });
@@ -149,13 +152,13 @@ function buildCard(
 function pickGroupColumn(
   columns: ResultSet["columns"],
   rows: DataRow[],
-  vars: Map<string, FieldValue> | undefined,
+  globals: ReadonlyMap<string, FieldValue> | null,
 ): ResultSet["columns"][number] | null {
   const candidates = columns.filter((c) => !c.total);
   if (candidates.length === 0) return null;
   const distinctOf = (col: ResultSet["columns"][number]): number => {
     const s = new Set<string>();
-    for (const row of rows) s.add(colValue(col, row, vars, 4));
+    for (const row of rows) s.add(colValue(col, row, globals, 4));
     return s.size;
   };
   for (const c of candidates) {
@@ -172,12 +175,12 @@ function pickGroupColumn(
 function colValue(
   col: ResultSet["columns"][number],
   row: DataRow,
-  vars: Map<string, FieldValue> | undefined,
+  globals: ReadonlyMap<string, FieldValue> | null,
   places: number,
 ): string {
   const value = col.total
-    ? (vars?.get(col.alias) ?? null)
-    : evaluateExpr(col.expr, row, null, undefined, undefined, vars);
+    ? (globals?.get(col.alias) ?? null)
+    : evaluateExpr(col.expr, row, null, undefined, undefined, globals ?? undefined);
   return formatCell(value, places);
 }
 

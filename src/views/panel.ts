@@ -8,7 +8,7 @@ import type { PanelDeps } from "@host/types";
 import { createPanelController, type PanelController } from "@render/panel-view";
 import { PANEL_VIEW_TYPE, type PanelViewState } from "./view-types";
 
-/** [ext] 查询刷新兜底：非 md 文件变更的去抖窗口（规范 §9） */
+/** [ext] 查询刷新兜底：非 md 文件变更的去抖窗口（规范 §6.9） */
 const EXT_REFRESH_DEBOUNCE_MS = 300;
 
 /**
@@ -73,7 +73,9 @@ export class DatashowPanelView extends ItemView {
   /** vault 变更（modify / create / delete / rename，含非 md）→ 去抖后重跑当前查询。 */
   private onVaultChange(): void {
     const board = this.deps.settings().boards.find((b) => b.id === this.state?.boardId);
-    if (!board || !board.sql.includes("[")) return; // 无 [ext] 的查询不订阅重跑
+    // 判定过宽但无害：SEARCH 正则 / 字符串里的 "[" 也会触发重跑；
+    // 无 [ext] 的重跑结果与上次相同，由 resultRun 竞态守卫兜底，维持现状不精确化
+    if (!board || !board.sql.includes("[")) return;
     this.clearExtRefreshTimer();
     this.extRefreshTimer = window.setTimeout(() => {
       this.extRefreshTimer = null;

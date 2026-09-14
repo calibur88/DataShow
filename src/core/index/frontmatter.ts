@@ -36,8 +36,9 @@ export function findDuplicateKeys(text: string): DuplicateKeyFinding[] {
   const hits = new Map<string, string[]>();
   for (let i = 1; i < end; i++) {
     const line = lines[i];
-    // 顶层键：行首无缩进；缩进行 / 注释 / 列表项不属于顶层键
-    const m = line.match(/^([^\s#][^:]*?):(?:\s|$)/);
+    // 顶层键：行首无缩进、非列表项（`- ` 开头是 YAML 顶层列表，不是键）；
+    // 注释 / 缩进行不属于顶层键
+    const m = line.match(/^(?!-)([^\s#][^:]*?):(?:\s|$)/);
     if (!m) continue;
     const key = m[1].trim();
     if (!key) continue;

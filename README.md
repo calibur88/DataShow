@@ -16,6 +16,9 @@
 > **版本兼容性**：
 > - **插件 `2.1.4`**：纯架构重构，行为零变化；视图渲染、看板定义均无改动，已有 `data.json`
 >   可继续使用（旧扁平格式首次保存后自动升级为槽位结构）；
+> - **DSQL `2.3`**：新增 `**COUNT**` 分类计数子句与槽位模型；`**TOTAL**` 的 `**AS**` 收紧为强制
+>   `$槽位$`（既有看板的裸名写法如 `**TOTAL** 成绩 **AS** 总成绩` 须改为 `$总成绩$`）——**破坏性**，
+>   详见 [CHANGELOG.md](CHANGELOG.md) DSQL 2.3 条目；
 > - **DSQL `2.2`**：新增 `**SEARCH**` 正文抽取子句；比较语义修订为「同能转数字 → 数值比」——
 >   `"007" %==% "7"` 由 false 变 true、`"" %==% 0` 由 true 变 false，
 >   依赖旧字节精确匹配口径的混合类型比较需复检（详见 [CHANGELOG.md](CHANGELOG.md) DSQL 2.2 条目）。
@@ -31,7 +34,7 @@ DataShow/
 ├── esbuild.config.mjs   构建 + 自动同步到两个测试库
 ├── styles.css           样式
 ├── src/                 插件源码（见下）
-├── tests/               单元测试（十套件，零 Obsidian 依赖）
+├── tests/               单元测试（十一套件，零 Obsidian 依赖）
 ├── scripts/test.mjs     测试运行器（esbuild 打包后交给 node）
 ├── docs/                DSQL 语言规范
 ├── dist/                构建产物（不入库）
@@ -45,11 +48,11 @@ DataShow/
 ```
 src/
 ├── main.ts         插件入口：只做装配（宿主适配器 → 索引器 → 视图注册）
-├── host/           types.ts 宿主接口与依赖契约唯一出口 + obsidian/ 七个适配器
+├── host/           types.ts 宿主接口与依赖契约唯一出口 + obsidian/ 七个适配器（另有 file-meta.ts 共享映射）
 ├── core/           可移植核心（零 Obsidian 依赖）
 │   ├── dsql/       DSQL 语言层（别名 @dsql，独立 tsconfig）：types.ts 语言层类型出口
 │   │               （含 ViewType 与 EMPTY 哨兵）+ lexer / parser / ast / functions / executor
-│   └── index/      行仓库 / 行构造 / frontmatter 原文扫描 / [ext] 文件级分派与自研 YAML 解析（别名 @index）
+│   └── index/      行仓库 / 行构造 / frontmatter 原文扫描 / 正文抽取 / [ext] 文件级分派与自研 YAML 解析（别名 @index）
 ├── controller/     索引器：宿主事件 → 行仓库
 ├── render/         纯 UI：面板 / 侧栏 + 表格·列表·卡片三视图
 ├── views/          Obsidian 视图壳（panel / sidebar / settings-tab）+ 视图类型常量
@@ -68,7 +71,7 @@ src/
 npm install
 npm run build   # tsc 类型检查 + 产出 dist/main.js，并自动同步到两个测试库
 npm run dev     # watch 模式：src / manifest.json / styles.css 变化即重建并同步
-npm test        # 单测十套件，共 229 例
+npm test        # 单测十一套件，共 243 例
 ```
 
 构建产物（`main.js` / `manifest.json` / `styles.css`）由 `esbuild.config.mjs` 自动同步到

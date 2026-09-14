@@ -3,7 +3,7 @@
 > **DSQL**（DataShow Query Language）—— Obsidian 元数据查询方言。
 > **DSQL 语言版本**：`2.3`（v2.3 新增 `**COUNT**` 分类计数子句与槽位模型，SEARCH 提前至聚合遍之前；
 > v2.2 新增 `**SEARCH**` 正文抽取子句与 §6.3 算术 / 比较补丁；v2.1 新增 `[ext]` 后缀过滤）
-> **文档版本**：`2.3.0`（语言版本与插件版本各自独立）
+> **文档版本**：`2.3.1`（语言版本与插件版本各自独立；2.3.1 定稿：别名两分法、LIMIT 整数、一元正负号语义）
 >
 > 本文档为权威依据：语法 EBNF + 语义逐条定义，语言变更需同步本文与 `tests/` 用例。
 
@@ -77,16 +77,20 @@ where_clause   = **WHERE** , expr ;                        (* 前件：FROM *)
 search_clause  = **SEARCH** , search_item , { "," , search_item } ;  (* 前件：FROM；至多一次 *)
 search_item    = STRING , **AS** , ident ;                 (* 正则 + 裸标识符别名（不接受 $变量$）；
                                                               非法正则 / 未转义 \p{ parse 期致命错误 *)
-limit_clause   = **LIMIT** , NUMBER ;                      (* 前件：FROM *)
+limit_clause   = **LIMIT** , NUMBER ;                      (* 前件：FROM；须为整数，小数为语法错误 *)
 select_list    = "*" | select_item , { "," , select_item } ;
-select_item    = expr , [ **AS** , alias ]                 (* 别名为裸标识符或 $变量$，归一化为裸名 *)
+select_item    = expr , [ **AS** , alias ]                 (* alias 为裸标识符（仅列标签）或 $变量$（派生变量） *)
                | **TOTAL** , ( ident | NUMBER ) , **AS** , variable ;  (* 聚合项：填充 $槽位$，自声明自投影 *)
                | variable ;                                           (* 裸槽位声明（同名至多一次）；
                                                                          由 TOTAL / COUNT 填充，未填充静默忽略 *)
 count_clause   = **COUNT** , count_item , { "," , count_item } ;      (* 独立子句，前件 FROM，至多一次 *)
 count_item     = comparison , **AS** , variable ;                     (* 显式比较（裸操作数致命）；
                                                                          AS 强制 $槽位$，须已在 SELECT 声明 *)
-alias          = ident | variable ;                        (* 归一化为裸名，进入变量命名空间 *)
+alias          = ident | variable ;                        (* 两分法（DSQL 2.3.1 定稿）：*)
+                                                               (* ident → 列标签：仅命名输出列，不进入变量命名空间，*)
+                                                               (*          不可被 $..$ 引用；*)
+                                                               (* variable → 派生变量：进入变量命名空间，*)
+                                                               (*          可被更晚的列以 $..$ 引用；*)
                                                                (* 全部别名互不相同，且不得与行字段同名（§6.7） *)
 source         = or_source ;
 or_source      = and_source , { **OR** , and_source } ;      (* **AND 优先于 OR** *)
@@ -257,7 +261,8 @@ function_call  = **函数名** , "(" , [ expr , { "," , expr } ] , ")" ;
 
 | 运算 | 规则（DSQL 2.2 修订） |
 |---|---|
-| **算术**（`%+%` `%-%` `%*%` `%/%` `%%%` `%^%`） | ① 任一操作数 null / empty → 结果 null，**不计 warning**；② 任一操作数为非原始值 → 结果 null，**计入 warnings**（禁止 `Number([5]) === 5` 式静默转换）；③ 否则做 `Number()` 转换（布尔 → 0/1；数字串 `"123"` → 123；空串 / 全空白 / 非数值串视为**转不出**）；④ 任一转出非有限数（NaN / ±Infinity）→ null（计入 warnings）；⑤ 除零 / 取模零 → null |
+| **算术**（`%+%` `%-%` `%*%` `%/%` `%%%` `%^%`） | ① 任一操作数 null / empty → 结果 null，**不计 warning**；② 任一操作数为非原始值 → 结果 null，**计入 warnings**（禁止 `Number([5]) === 5` 式静默转换）；③ 否则做 `Number()` 转换（布尔 → 0/1；数字串 `"123"` → 123；空串 / 全空白 / 非数值串视为**转不出**）；④ 任一转出非有限数（NaN / ±Infinity）→ null（计入 warnings）；⑤ 除零 / 取模零 → null；⑥ 结果非有限数（NaN / ±Infinity）→ null（计入 warnings，DSQL 2.3.1 定稿） |
+| **一元正负号**（`%+%` / `%-%` 前缀） | 仅作用于数值；非数值（含数字串 / 布尔 / null / empty 值）→ null，不计 warning（DSQL 2.3.1 定稿） |
 | **字符串连接**（`%||%`） | 任一操作数 null（含 empty 值）→ null；非字符串自动转字符串 |
 | **比较**（`%==%` 族） | ① null / empty 参与 → 按同一性（`null %==% null` 为 true，其余 false；`%!=%` 取反）；② 任一操作数为非原始值 → false（守卫写在一切 `Number()` / 隐式字符串化之前，`[5] %==% "5"` 不因 toString 漏成 true）；③ 否则两边都能 `Number()` 转出有限数 → **数值比**（`"007" %==% "7"` 为 true）；两边都转不出 → 字符串比（UTF-8 字节序，区分大小写）；一边能转一边不能 → false |
 | **真值**（裸真值判断） | **empty 值**、null、0、false、空串、空数组 → 假；**其余一切值为真** |
@@ -334,7 +339,8 @@ function_call  = **函数名** , "(" , [ expr , { "," , expr } ] , ")" ;
 | **TOTAL** 聚合 | `$变量$` | 变量命名空间 | `$总成绩$` |
 | 表达式派生（**AS**） | `$变量$` | 变量命名空间 | `$平均分$` |
 
-- `$平均分$` → 查变量表；`平均分` → 查行字段；AS 定义的别名（含表达式派生列）自动进入变量表；
+- `$平均分$` → 查变量表；`平均分` → 查行字段；`**AS** $变量$` 定义的派生别名自动进入变量表
+  （裸标识符别名仅作列标签，不进入变量表——§3 alias 两分法，DSQL 2.3.1 定稿）；
 - SELECT 列表**从左到右**计算，前面的派生变量可被后面的列引用（链式派生），不可反向引用；
 - 变量仅存在于当前查询执行期间，不写回任何数据；**仅 SELECT 内可引用**
   （WHERE / SORT 中出现 `$变量$` 为致命错误——每行派生变量在投影阶段才计算，时序上不可用）。

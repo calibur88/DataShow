@@ -61,6 +61,7 @@ export type FieldValue = string | number | boolean | FieldValue[] | null;
 
 /**
  * DSQL 1.5 empty 值哨兵：字段存在但未赋值（frontmatter `字段:`，冒号后无内容）。
- * 除 empty() 谓词外，一切运算按 null 传播（算术 → null + warning，比较 → false，真值为假）。
+ * 除 empty() 谓词外，一切运算按 null 传播（算术 → null 不计 warning——DSQL 2.2 修订；
+ * 比较 → 同一性，真值为假）。
  */
 export const EMPTY = Symbol("DSQL:empty") as unknown as FieldValue;

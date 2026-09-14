@@ -22,7 +22,7 @@ DataShow 是面向 Obsidian 的元数据看板插件：
 根目录/
 ├── src/                 插件源码（唯一入口 src/main.ts；按 host / core / controller /
 │                        render / views / settings / utils 分层，详见 §3）
-├── tests/               单元测试（十套件）
+├── tests/               单元测试（十一套件）
 ├── scripts/test.mjs     测试运行器
 ├── docs/                DSQL 语言规范
 ├── dist/                构建产物（不入库）
@@ -40,7 +40,8 @@ DataShow 是面向 Obsidian 的元数据看板插件：
 | `test-vault-local/` | 日常在 Obsidian 中实际验收（看板加载、查询、视图切换、卡片编辑）。测试产生的改动都留在这里 | ❌（`.gitignore` 排除） |
 | `test-vault/` | 干净版本，仅用于版本提交，不用于日常测试 | ✅ |
 
-两者预置看板一致，按 功能示例 / 数学示例 / DSQL语言示例 / 三值示例 / 跨文件示例 / 跨文件夹示例 / ext示例 七大类组织，示例数据在 `示例/` 下。
+两者预置看板一致（56 个），按 功能示例 / 数学示例 / DSQL语言示例 / 三值示例 / 跨文件示例 /
+跨文件夹示例 / ext示例 / search示例 / 审查修复示例 九大类组织，示例数据在 `示例/` 下。
 看板定义存于 `.obsidian/plugins/data-show/data.json`（**纳入版本控制**，是含全部 DSQL 的核心资产）；
 插件构建产物（`main.js` / `manifest.json` / `styles.css`）由 esbuild 自动同步进库，**不入库**。
 
@@ -54,15 +55,15 @@ DataShow 是面向 Obsidian 的元数据看板插件：
 main.ts                 装配：new 宿主适配器 → new 索引器 → registerView → 命令/ribbon
  ├─ host/
  │   ├─ types.ts        唯一类型出口：宿主接口与依赖契约（IFileMeta / IVaultHost / IOpener /
- │   │                  IFrontmatterHost / IFrontmatterEditor / IYamlCodec / IStorageHost /
+ │   │                  IFrontmatterHost / IYamlCodec / IStorageHost /
  │   │                  IUiHost / IExtSourceHost / IRowSource / PanelDeps / SidebarDeps /
  │   │                  SettingsTabDeps）
  │   └─ obsidian/       宿主适配器（import "obsidian" 的合法位置之一）
  │       ├─ vault-host.ts        metadataCache + vault → IVaultHost（反向链接按事件失效、惰性重算）
  │       ├─ ext-source-host.ts   vault 全文件列表 + metadataCache + cachedRead → IExtSourceHost
+ │       ├─ file-meta.ts         TFile → IFileMeta 共享映射（vault-host / ext-source-host 共用）
  │       ├─ opener.ts            workspace.openLinkText → IOpener
  │       ├─ frontmatter-host.ts  processFrontMatter → IFrontmatterHost（数据侧）
- │       ├─ frontmatter-modal.ts Modal → IFrontmatterEditor（UI 侧：属性编辑弹窗）
  │       ├─ yaml-codec.ts        parseYaml / stringifyYaml → IYamlCodec
  │       ├─ storage-host.ts      loadData / saveData → IStorageHost（key 槽位）
  │       └─ ui-host.ts           Notice + 控制台 → IUiHost
@@ -78,7 +79,7 @@ main.ts                 装配：new 宿主适配器 → new 索引器 → regis
  │       ├─ body.ts          正文抽取纯函数（SEARCH 用）：md 剥 frontmatter、非 md 剥围栏块
  │       └─ ext-source.ts    [ext] 文件级读取 + body 预读：FROM 目录收集 → 按后缀分派两条解析路径
  ├─ controller/
- │   └─ indexer.ts       索引器：订阅 IVaultHost → 构造行 → 写 DataStore（300ms 防抖）
+ │   └─ indexer.ts       索引器：订阅 IVaultHost → 构造行（先检重复键）→ 写 DataStore（300ms 防抖）
  ├─ render/              纯 UI（只吃 Deps，零 obsidian import）
  │   ├─ panel-view.ts    面板：DSQL 编辑器 + 工具条 + 结果区分派
  │   ├─ sidebar-view.ts  侧栏：看板分组清单与折叠持久化
@@ -143,7 +144,7 @@ main ──► views ──► render ──► controller ──► core ──
 npm install
 npm run dev     # watch 模式：src / manifest.json / styles.css 变化即重建，并同步到两个测试库
 npm run build   # tsc 类型检查 + esbuild 生产构建 → dist/main.js
-npm test        # 单测十套件（零 Obsidian 依赖）
+npm test        # 单测十一套件（零 Obsidian 依赖）
 ```
 
 - **构建流程**：`esbuild.config.mjs` 以 `src/main.ts` 为入口，产出 `dist/main.js`；
@@ -156,16 +157,17 @@ npm test        # 单测十套件（零 Obsidian 依赖）
   > 验证看板 SQL 不能直接用 `node` 跑 TS：`src/core/dsql/parser.ts` 用了参数属性
   > （`constructor(private tokens: Token[])`），node 的 strip-only 模式不支持，必须经 esbuild 打包。
 
-- **测试套件**（共 229 例）：
+- **测试套件**（共 243 例）：
 
 | 套件 | 领域 | 例数 |
 |---|---|---|
 | `tests/feature.test.ts` | 功能示例（子句、排序、链接、布尔与日期、自动列） | 22 |
-| `tests/math.test.ts` | 数学示例（四则、乘方取模、函数、比较逻辑、TOTAL） | 29 |
-| `tests/dsql-language.test.ts` | DSQL 语言示例（词法、语法、错误路径） | 22 |
+| `tests/math.test.ts` | 数学示例（四则、乘方取模、函数、比较逻辑、TOTAL） | 31 |
+| `tests/dsql-language.test.ts` | DSQL 语言示例（词法、语法、错误路径） | 26 |
 | `tests/store.test.ts` | 行仓库（增删改、订阅通知） | 4 |
-| `tests/ingest.test.ts` | 摄取层（重复键、摄取归一、摄取警告） | 4 |
-| `tests/ext-source.test.ts` | [ext] 后缀过滤（语法、三态、分派、范围、求值、自研解析器） | 61 |
+| `tests/ingest.test.ts` | 摄取层（重复键、摄取归一、摄取警告） | 5 |
+| `tests/indexer.test.ts` | 索引器（全量重建去重、删除 / 重命名清警告、resolved 不双跑） | 4 |
+| `tests/ext-source.test.ts` | [ext] 后缀过滤（语法、三态、分派、范围、求值、自研解析器） | 64 |
 | `tests/search.test.ts` | SEARCH 正文抽取（语法、STRING 词法、正则、求值、冲突、body 来源、§6.3 补丁） | 39 |
 | `tests/count.test.ts` | COUNT 分类计数（语法、槽位模型、口径、惯用法、错误路径） | 23 |
 | `tests/viewSync.test.ts` | 视图与 SQL 双向同步 | 15 |

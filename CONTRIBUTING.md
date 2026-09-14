@@ -27,7 +27,7 @@
 | 目录 | 职责 | 可 `import "obsidian"` |
 |---|---|---|
 | `src/host/types.ts` | 宿主接口与依赖契约的唯一出口（纯类型） | ❌ |
-| `src/host/obsidian/` | 宿主适配器（vault / opener / frontmatter / yaml / storage / ui） | ✅ |
+| `src/host/obsidian/` | 宿主适配器（vault / ext-source / opener / frontmatter / yaml / storage / ui，加 file-meta 共享映射） | ✅ |
 | `src/core/dsql/` | DSQL 语言层（别名 `@dsql`；独立 tsconfig，可独立发版） | ❌ |
 | `src/core/index/` | 行仓库、行构造、frontmatter 扫描（别名 `@index`） | ❌ |
 | `src/controller/` | 索引器：宿主事件 → 行仓库 | ❌ |
@@ -61,7 +61,7 @@
 ```bash
 npm install
 npm run dev     # watch 模式，产物自动同步到两个测试库
-npm test        # 单测十套件全绿
+npm test        # 单测十一套件全绿
 npm run build   # 类型检查 + 生产构建
 ```
 
@@ -113,7 +113,7 @@ obsidian vault=test-vault-local dev:errors                    # 查看捕获的�
 | `API.md` | BoardDef 结构、导出签名、版本号、渲染入口 |
 | `CHANGELOG.md` | 新增条目（按「插件更新 / DSQL 更新」两类组织，格式见 §6） |
 | `docs/DSQL-语言规范.md` | 语法产生式、关键词表、语义规则、版本号 |
-| `test-vault/README.md` | 看板清单、可复制示例、操作说明 |
+| `test-vault/README.md` | 看板清单、可复制示例、操作说明；`test-vault-local/README.md`（不入库）同步对齐，仅头部保留本地库说明 |
 | `manifest.json` / `versions.json` / `package.json` | 版本号 |
 | `TODO` | 落地后清空对应条目；未完成项保留 |
 
@@ -164,7 +164,7 @@ obsidian vault=test-vault-local dev:errors                    # 查看捕获的�
 | **日期格式** | `YYYY-MM-DD`，本地时区，勿跨日写错。 |
 | **条目粒度** | 每个变更条目用 `**加粗标题**：简述` 开头，下方用 `-` 列表展开详细说明。若变更简单（如仅版本号递增），可省略列表，直接写简述。 |
 | **破坏性变更** | 须在条目末尾用 `**破坏性**` 显式标注，并在正文开头用 `> **破坏性大版本**` 单独警示（如 DSQL v2.0 条目）。 |
-| **测试情况** | 每个版本末尾须标注测试通过情况（如“测试：229 例（十套件）全部通过”）。 |
+| **测试情况** | 每个版本末尾须标注测试通过情况（如“测试：243 例（十一套件）全部通过”）。 |
 | **版本兼容声明** | 若当前版本与上一版本功能兼容，在版本末尾声明（如“**本版本功能逻辑与 2.0.x 完全兼容**”）。 |
 | **禁止编造** | 不确定是否重复的条目一律保留，禁止编造或删除历史条目。 |
 
@@ -214,7 +214,7 @@ obsidian vault=test-vault-local dev:errors                    # 查看捕获的�
 ```typescript
 /**
  * @module dsql/executor
- * @description DSQL 执行器，按 FROM → WHERE → SORT → LIMIT → SELECT 管线执行查询
+ * @description DSQL 执行器，按 FROM → SEARCH → 聚合 → WHERE → COUNT → SORT → LIMIT → SELECT 管线执行查询
  */
 ```
 
@@ -273,7 +273,7 @@ card.style.display = 'none';
 
 - 测试套件位于 `tests/`，新套件必须**手动注册到 `tests/all.ts`**
   （项目用自定义 `scripts/test.mjs` + 显式 import，非 vitest / jest 自动扫描）；
-- 套件按领域组织：功能示例 / 数学示例 / DSQL 语言 / store / 摄取层 / ext后缀过滤 / SEARCH正文抽取 / COUNT计数 / viewSync / normalizeBoard；
+- 套件按领域组织：功能示例 / 数学示例 / DSQL 语言 / store / 摄取层 / 索引器 / ext后缀过滤 / SEARCH正文抽取 / COUNT计数 / viewSync / normalizeBoard；
 - 语法 / 语义变更必须同步新增或修改 `dsql-language.test.ts` 用例（含错误路径与边界）；
 - 提交前 `npm test` 全绿；测试例数变化（如「80 → 106」）同步到 README 与 ARCHITECTURE。
 

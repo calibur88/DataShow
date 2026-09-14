@@ -59,3 +59,6 @@ function contains(haystack: FieldValue, needle: FieldValue): FieldValue {
   if (typeof haystack === "string") return haystack.includes(String(needle));
   return false;
 }
+
+/** 内置函数名单一事实源（词法层校验用；与 FUNCTIONS 表由同一对象派生，不会漂移） */
+export const FUNCTION_NAMES: ReadonlySet<string> = new Set(Object.keys(FUNCTIONS));

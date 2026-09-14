@@ -110,8 +110,6 @@ export interface SortKey {
 
 export interface SortClause {
   keys: SortKey[];
-  /** 子句级方向（键未指定时使用）；null = asc */
-  dir: "asc" | "desc" | null;
 }
 
 export interface Query {

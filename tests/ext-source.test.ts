@@ -212,7 +212,24 @@ test("[求值] 并置简写语义与显式 AND 一致", async () => {
   assert.deepEqual(paths(juxta), paths(explicit));
 });
 
+test("[语法] [txt] **NOT** … 简写合法且与显式 AND 同构（DSQL 2.3.1 修复）", () => {
+  const implicit = parseQuery('**FROM** "logs" **WHERE** [txt] **NOT** status %==% \'error\'');
+  const explicit = parseQuery('**FROM** "logs" **WHERE** [txt] **AND** **NOT** status %==% \'error\'');
+  assert.deepEqual(JSON.parse(JSON.stringify(implicit.where)), JSON.parse(JSON.stringify(explicit.where)));
+});
+
+test("[求值] [txt] NOT status %==% 'x' 简写求值与显式一致", async () => {
+  const implicit = await run("**FROM** \"logs\" **WHERE** [txt] **NOT** status %==% 'x'");
+  const explicit = await run("**FROM** \"logs\" **WHERE** [txt] **AND** **NOT** status %==% 'x'");
+  assert.deepEqual(paths(implicit), paths(explicit));
+  assert.deepEqual(paths(implicit), []); // 唯一 txt 行 status=x → NOT 后为空集
+});
+
 /* ---------- 三种状态（collectExtFilters） ---------- */
+
+test("[三态] [txt,] 尾随空段 → 去空段（Set(['txt'])，DSQL 2.3.1）", () => {
+  assert.deepEqual(collectExtFilters(parseQuery('**FROM** "logs" **WHERE** [txt,] s %==% 1').where), new Set(["txt"]));
+});
 
 test("[三态] 没写 [ext] → null（零回归）", () => {
   assert.equal(collectExtFilters(null), null);

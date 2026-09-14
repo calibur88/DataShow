@@ -13,13 +13,13 @@
 
 | API | 签名 | 用途 |
 |---|---|---|
-| `app.metadataCache.getFileCache(file)` | `→ CachedMetadata` | 读笔记缓存，`?.frontmatter` 取属性对象 |
-| `stringifyYaml(obj)` | `any → string` | 属性对象 → YAML 文本（编辑弹窗展示） |
-| `parseYaml(text)` | `string → any` | YAML 文本 → 对象（保存前校验，失败抛错） |
+| `app.metadataCache.getFileCache(file)` | `→ CachedMetadata` | 读笔记缓存，`?.frontmatter` 取属性对象、`?.frontmatterPosition` 取 frontmatter 结束偏移 |
+| `stringifyYaml(obj)` | `any → string` | 值 → YAML 文本（`IYamlCodec.stringify`，结果区「解析失效」列表渲染） |
+| `parseYaml(text)` | `string → any` | YAML 文本 → 对象（`IYamlCodec.parse`；非 md 路径另走自研 `parseYamlFallback`） |
 | `app.fileManager.processFrontMatter(file, fn)` | `(TFile, (fm: any) => void) → Promise<void>` | **官方原子写回**：读-改-写 frontmatter，不碰正文 |
 
-插件内写入点（`src/render/panel-view.ts` 装配保存回调 → `src/render/card-view.ts` 内联编辑触发；
-`src/host/obsidian/frontmatter-modal.ts` 属性弹窗）：
+插件内唯一写入点：`src/render/panel-view.ts` 装配保存回调（走 `IFrontmatterHost.setField`）→
+`src/render/card-view.ts` 卡片字段内联编辑触发；表格 / 列表为只读，v2.0 起已无属性编辑弹窗链路：
 
 ```ts
 await app.fileManager.processFrontMatter(file, (fm) => {
@@ -32,20 +32,24 @@ await app.fileManager.processFrontMatter(file, (fm) => {
 
 | API | 用途 |
 |---|---|
-| `app.metadataCache.on("changed" / "deleted" / "resolve", cb)` | 增量索引监听（索引器首扫 + debounce 增量） |
-| `app.vault.getMarkdownFiles()` | 全量首扫的文件清单 |
-| `app.vault.getAbstractFileByPath(path)` | 行路径 → `TFile`（属性编辑定位文件） |
+| `app.metadataCache.on("resolved" / "changed", cb)` | 全量首扫补漏（`resolved`）与 md 增量索引（`changed`，索引器内 300ms debounce） |
+| `app.vault.on("delete" / "rename" / "modify" / "create", cb)` | 行删除 / 重命名同步；vault 级 `modify` / `create`（含非 md）供 `[ext]` 查询去抖重跑兜底 |
+| `app.vault.getMarkdownFiles()` | md 全量首扫文件清单（`IVaultHost.listMarkdownFiles`） |
+| `app.vault.getFiles()` | `[ext]` 目录范围的全文件清单（含非 md，`IExtSourceHost.listFiles`） |
+| `app.vault.getFileByPath(path)` | 行路径 → `TFile`（属性读写、正文读取定位；旧 `getAbstractFileByPath` 已不再使用） |
+| `app.vault.cachedRead(file)` | 读原文：frontmatter 重复键检测、非 md 自研解析、SEARCH body 预读 |
+| `app.metadataCache.resolvedLinks` | 出链 / 入链（反向索引按事件失效、惰性重算，一次批量刷新内只算一次） |
 
 ### 3. 工作区 UI
 
 | API | 用途 |
 |---|---|
 | `ItemView` / `WorkspaceLeaf` | 看板面板（`setState` / `getState` 持久化 boardId）与侧栏视图 |
-| `Modal` | frontmatter 编辑弹窗基类 |
 | `Plugin` / `PluginSettingTab` / `Setting` | 插件装配与设置页 |
 | `app.workspace.openLinkText(path, "", false)` | 点击文件名打开笔记 |
+| `Notice` | 用户提示（`IUiHost.notify` / `warn` / `error`） |
 
-> 内联编辑与弹窗保存后无需手动刷新：`processFrontMatter` 触发 metadataCache 变更 →
+> 内联编辑保存后无需手动刷新：`processFrontMatter` 触发 metadataCache 变更 →
 > 插件索引器增量更新行仓库 → 订阅者（面板）自动重跑查询。
 
 ---
@@ -65,9 +69,11 @@ import { executeQuery, evaluateExpr, compareUtf8 } from "./src/core/dsql/executo
 | `executeQuery(q, rows, ctx, opts?)` | `→ ResultSet` | 执行：FROM 源解析 → [ext] 行并入 → SEARCH 正文抽取 → 聚合遍（TOTAL）→ WHERE → COUNT → SORT / LIMIT / SELECT；`opts.debug` 收集调试信息，`opts.ingestWarnings` 并入摄取期警告，`opts.extRows` / `opts.bodies` 由面板按 FROM 范围预读后传入 |
 | `evaluateExpr(expr, row, ctx, track?, warn?, vars?)` | `→ FieldValue` | 单表达式求值（面板渲染单元格共用） |
 | `truthy(v)` | `FieldValue → boolean` | 裸真值判断（empty 值 / null / 0 / false / 空串 / 空数组 → 假） |
-| `compareUtf8(a, b)` | `(string, string) → number` | UTF-8 字节序比较（排序 / 自动列的确定性基准） |
+| `compareUtf8(a, b)` | `(string, string) → number` | UTF-8 字节序比较（排序 / 自动列的确定性基准；含同一性快路径） |
+| `FUNCTION_NAMES` | `ReadonlySet<string>` | 内置函数名单一事实源（词法层校验用，与 `FUNCTIONS` 表同源，不会漂移） |
 | `EMPTY` | `FieldValue`（symbol 哨兵） | DSQL 未赋值哨兵（`src/core/dsql/types.ts`）；仅 `**empty**()` 能识别，其余运算按 null 传播 |
-| `ResultSet` | `{ view, columns, rows, globals, debug? }` | `view: ViewType`；`columns: { alias, expr }[]`；`debug` 见下 |
+| `ResultSet` | `{ view, columns, rows, globals, debug? }` | `view: ViewType`；`columns: { alias, expr, total? }[]`；`globals` = TOTAL / COUNT 填充的变量表（无则 null）；`debug` 见下 |
+| `QueryDebug` | `{ from, where, sort, limit, fieldMisses, warnings, sourceStats, aggregates, search, count, executionTimeMs }` | 调试信息（`aggregates` = TOTAL 项、`search` = 各 SEARCH 模板命中统计、`count` = 各 COUNT 计数项，调试页对应 AGG / SEARCH / COUNT 行） |
 | `QueryWarning` | `{ type, message }` | 结构化警告（除零 / 类型不匹配 / 未知函数 / TOTAL / SORT / duplicateKey 等） |
 
 语法与语义见 [docs/DSQL-语言规范.md](docs/DSQL-语言规范.md)。
@@ -133,20 +139,20 @@ findDuplicateKeys(content): { field: string; rawLines: string[] }[];
 `src/host/types.ts` 是 **宿主接口与依赖契约的唯一出口**，所有跨层能力均经本文件声明；
 `src/host/obsidian/` 实现适配器，`src/main.ts` 装配注入，业务层只认接口。
 
-**八条宿主接口**：
+**七条宿主接口**（`IFrontmatterEditor` 与属性编辑弹窗链路已随 v2.0 编辑权收敛删除）：
 
 | 接口 | 用途 | 关键方法 |
 |---|---|---|
 | `IVaultHost` | 数据源：列文件、读元数据与正文、订阅变更 | `listMarkdownFiles()` / `readFrontmatter(path)` / `getOutlinks(path)` / `getInlinks(path)` / `readText(path)` / `subscribe(handlers)` |
 | `IOpener` | 打开笔记 | `openFile(path, opts?)` |
 | `IFrontmatterHost` | 属性数据侧读写（不含 UI） | `read(path)` / `setField(path, field, value)` / `replaceAll(path, fields)` |
-| `IFrontmatterEditor` | 属性编辑弹窗（UI 侧） | `openEditor(path, onSaved)` |
 | `IYamlCodec` | YAML 编解码 | `parse(text)` / `stringify(value)` |
 | `IStorageHost` | 带 key 的持久化槽位 | `load<T>(key)` / `save(key, data)` |
 | `IUiHost` | 用户反馈与日志 | `notify(msg)` / `warn(msg)` / `error(msg)` |
 | `IExtSourceHost` | [ext] 文件级读取 / SEARCH 正文读取（查询级，无常驻状态） | `listFiles(folderPaths)` / `readMd(path)` / `readNonMdText(path)` / `readBody(path)` |
 
-另有 `IRowSource`（`core/index/store.ts` 的只读数据视图，非宿主接口）：
+另有 `IFileMeta`（行元数据契约，`host/obsidian/file-meta.ts` 的 `toMeta` 由 vault-host 与
+ext-source-host 共用实现）与 `IRowSource`（`core/index/store.ts` 的只读数据视图，非宿主接口）：
 `all(): DataRow[]` / `ingestWarnings()` / `subscribe(cb)`，供 UI 层消费行仓库快照。
 
 **读写约定**：读路径失败一律返回 `null`（core 内不抛不 try）；写路径失败以 `reject(Error)` 上抛。
@@ -155,11 +161,11 @@ findDuplicateKeys(content): { field: string; rawLines: string[] }[];
 
 | 契约 | 使用者 | 含有的能力 |
 |---|---|---|
-| `PanelDeps` | `render/panel-view.ts` → `views/panel.ts` | `rows` + `settings()` + `saveSettings()` + `onBoardsChange()` + `onVaultChange()` + `extSource` + `codec` + `opener` + `frontmatter` + `editor` + `ui` |
+| `PanelDeps` | `render/panel-view.ts` → `views/panel.ts` | `rows` + `settings()` + `saveSettings()` + `onBoardsChange()` + `onVaultChange()` + `extSource` + `codec` + `opener` + `frontmatter` + `ui` |
 | `SidebarDeps` | `render/sidebar-view.ts` → `views/sidebar.ts` | `settings()` + `saveSettings()` + `openBoard()` + `onBoardsChange()` |
 | `SettingsTabDeps` | `views/settings-tab.ts` | `settings()` + `saveSettings()` + `defaultBoards()` |
 
-**移植提示**：换宿主只需重写 `main.ts` + `views/` + `host/obsidian/`（实现全部八条接口），
+**移植提示**：换宿主只需重写 `main.ts` + `views/` + `host/obsidian/`（实现全部七条接口），
 `core/` / `controller/` / `render/` / `settings/` / `utils/` 逐字不动；
 另需宿主提供 `HTMLElement` 的 `createDiv` / `createEl` / `createSpan` / `addClass` / `toggleClass` / `isShown` 等原型扩展
 （或改用 `utils/dom` 的等价实现）。

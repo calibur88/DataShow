@@ -121,12 +121,6 @@ export interface IFrontmatterHost {
   replaceAll(path: string, fields: Record<string, unknown>): Promise<void>;
 }
 
-/** frontmatter 编辑弹窗能力：宿主 UI 侧，仅被 UI 层调用 */
-export interface IFrontmatterEditor {
-  /** 打开属性编辑弹窗；保存成功后回调 onSaved */
-  openEditor(path: string, onSaved: () => void): void;
-}
-
 /** 持久化能力。key 用于区分 settings / 缓存 / 视图状态，避免互相覆盖 */
 export interface IStorageHost {
   /** 读取；不存在时返回 null */
@@ -176,7 +170,6 @@ export interface PanelDeps {
   codec: IYamlCodec;
   opener: IOpener;
   frontmatter: IFrontmatterHost;
-  editor: IFrontmatterEditor;
   ui: IUiHost;
 }
 

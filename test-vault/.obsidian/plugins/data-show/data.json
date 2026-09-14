@@ -418,6 +418,38 @@
       "description": "两口径对照：$全量$（TOTAL 恒 FROM 全量，含 [ext]）= 6；$过滤文件数$（true %==% true 恒真惯用法，WHERE 后行集）= 2（仅 [txt] 行）",
       "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 文件,\n  **TOTAL** 1 **AS** $全量$,\n  $过滤文件数$\n**FROM** \"示例/文章示例\"\n**WHERE** [txt]\n**COUNT** true %==% true **AS** $过滤文件数$",
       "viewType": ""
+    },
+    {
+      "id": "fx1-overflow-guard",
+      "name": "修复·溢出守卫与一元正负号",
+      "type": "审查修复示例",
+      "description": "DSQL 2.3.1：溢出除/乘显示 —（null+警告，修复前为 Infinity）；一元 %-% 仅作用数值（数字串 → —）；对照二元算术可转数字串",
+      "sql": "**TABLE_VIEW** **SELECT**\n  名称,\n  超大 %/% 微小 **AS** 溢出除法,\n  超大 %*% 超大 **AS** 溢出乘法,\n  %-%数字串 **AS** 一元减数字串,\n  %-%数值 **AS** 一元减数值,\n  数字串 %+% 0 **AS** 二元转换对照\n**FROM** \"示例/审查修复示例\"\n**SORT** 名称 **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "fx2-dupkey-list",
+      "name": "修复·重复键剔除与顶层列表对照",
+      "type": "审查修复示例",
+      "description": "DSQL 2.3.1：顶层列表项不再误判重复键（顶层列表.md 应在结果中，仅 file.* 列）；重复键对照.md 应被正确剔除（开调试可见 duplicateKey 警告，字段名=数值）",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 文件,\n  名称,\n  数值\n**FROM** \"示例/审查修复示例\"\n**SORT** 文件 **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "fx3-ext-not-shorthand",
+      "name": "修复·[ext] 并置 NOT 简写",
+      "type": "审查修复示例",
+      "description": "DSQL 2.3.1：**WHERE** [txt] **NOT** status %==% '正常' 现与显式 AND NOT 同构（修复前报「多余的查询子句」）。预期命中：db.txt（app.txt status=正常 被排除）",
+      "sql": "**TABLE_VIEW** **SELECT**\n  file.name **AS** 文件,\n  status **AS** 状态,\n  level **AS** 级别\n**FROM** \"示例/日志示例\"\n**WHERE** [txt] **NOT** status %==% '正常'\n**SORT** 文件 **ASC**",
+      "viewType": ""
+    },
+    {
+      "id": "fx4-syntax-tighten",
+      "name": "修复·语法收紧演示（预期报错）",
+      "type": "审查修复示例",
+      "description": "DSQL 2.3.1：SORT 方向修饰符重复 → 「方向修饰符重复」；同类收紧：LIMIT 1.5 → 「应为整数」、$a b$ → 「非法变量名」。本板故意报错，用于核对错误文案",
+      "sql": "**TABLE_VIEW** **SELECT** status **FROM** \"示例/日志示例\" **SORT** status **DESC** **DESC**",
+      "viewType": ""
     }
   ]
 }

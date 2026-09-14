@@ -14,11 +14,11 @@ import type { BinOp, ColumnSel, CountItemNode, Expr, Query, SearchItemNode, Sort
 import { FUNCTIONS, Lexer, type Token } from "./lexer";
 import type { FieldValue, ViewType } from "./types";
 
-/** [ext] 内容 → 后缀列表：`[]` → 空数组（ALL 语义）；其余按逗号切、逐段 trim，原样保留不归一化 */
+/** [ext] 内容 → 后缀列表：`[]` → 空数组（ALL 语义）；其余按逗号切、逐段 trim、去空段，原样保留不归一化 */
 function parseExts(raw: string): string[] {
   const trimmed = raw.trim();
   if (trimmed === "") return [];
-  return raw.split(",").map((part) => part.trim());
+  return raw.split(",").map((part) => part.trim()).filter((part) => part !== "");
 }
 
 /**
@@ -145,6 +145,9 @@ class Parser {
         this.advance();
         const tok = this.peek();
         if (tok.type !== "number") throw this.err(tok, "**LIMIT** 后应为数字");
+        if (!Number.isInteger(parseFloat(tok.value))) {
+          throw this.err(tok, "**LIMIT** 应为整数（小数为语法错误）");
+        }
         this.advance();
         limit = parseInt(tok.value, 10);
       } else if (this.isMarked("WITHOUT")) {
@@ -497,7 +500,7 @@ class Parser {
   /* ---------- SORT ---------- */
 
   private parseSortClause(): SortClause {
-    // SORT [BY] 排序键, ...（每个键可带 [ASC|DESC] 与 BY (优先级)）[ASC|DESC]
+    // SORT [BY] 排序键, ...（每个键可带 [ASC|DESC] 与 BY (优先级)）[各 modifier 至多一次]
     this.matchKw("BY"); // 首个 BY 可选（SORT **BY** 状态 ...）
 
     const keys: SortKey[] = [];
@@ -507,8 +510,15 @@ class Parser {
       let priority: FieldValue[] | null = null;
       // 方向与 BY 优先级的书写顺序不限定
       for (;;) {
-        if (dir === null && this.matchKw("DESC")) { dir = "desc"; continue; }
-        if (dir === null && this.matchKw("ASC")) { dir = "asc"; continue; }
+        const t = this.peek();
+        if (t.type === "marked" && (t.value === "DESC" || t.value === "ASC")) {
+          if (dir !== null) {
+            throw this.err(t, "方向修饰符重复（每个排序键至多一个 **ASC**/**DESC**）");
+          }
+          this.advance();
+          dir = t.value === "DESC" ? "desc" : "asc";
+          continue;
+        }
         if (priority === null && this.matchKw("BY")) {
           this.expectPunct("(");
           priority = [];
@@ -525,11 +535,7 @@ class Parser {
       keys.push({ expr, dir, priority });
     } while (this.matchPunct(","));
 
-    let dir: SortClause["dir"] = null;
-    if (this.matchKw("DESC")) dir = "desc";
-    else if (this.matchKw("ASC")) dir = "asc";
-
-    return { keys, dir };
+    return { keys };
   }
 
   /* ---------- 表达式（优先级从低到高） ---------- */
@@ -564,11 +570,12 @@ class Parser {
   private parseComparison(): Expr {
     const first = this.parseConcat();
     // [ext] 并置简写（规范 §3 定稿示例）：[txt] status %==% 'x' ≡ [txt] **AND** status %==% 'x'；
-    // 右侧解析为完整比较链（含比较符），隐式 AND 与显式 **AND** 同优先级
+    // 右侧经 parseNot() 解析（与显式 **AND** 的 parseAnd→parseNot 同构，**NOT** 亦可用），
+    // 隐式 AND 与显式 **AND** 同优先级
     if (first.kind === "extFilter" && this.startsPrimary()) {
       let left: Expr = first;
       while (left.kind === "extFilter" && this.startsPrimary()) {
-        left = { kind: "binary", op: "and", left, right: this.parseComparison() };
+        left = { kind: "binary", op: "and", left, right: this.parseNot() };
       }
       return left;
     }
@@ -581,14 +588,14 @@ class Parser {
     return left; // 裸操作数：真值判断（如 **contains**(...)、布尔字段）
   }
 
-  /** 当前 token 是否能开启一个 primary（并置简写的右端判定） */
+  /** 当前 token 是否能开启一个 primary（并置简写的右端判定；**NOT** 开头的表达式也算） */
   private startsPrimary(): boolean {
     const tok = this.peek();
     if (tok.type === "extfilter" || tok.type === "ident" || tok.type === "string" ||
         tok.type === "path" || tok.type === "number") {
       return true;
     }
-    if (tok.type === "marked" && FUNCTIONS.has(tok.value)) return true;
+    if (tok.type === "marked" && (FUNCTIONS.has(tok.value) || tok.value === "NOT")) return true;
     return tok.type === "punct" && tok.value === "(";
   }
 

@@ -200,4 +200,41 @@ test("TOTAL **AS** 强制 $槽位$；自声明与裸槽位同名 → 重复声�
   );
 });
 
+test("SORT 方向修饰符重复 → 致命报错（各 modifier 至多一次，§3）", () => {
+  assert.throws(
+    () => parseQuery(`**FROM** "M" **SORT** s **DESC** **DESC**`),
+    /方向修饰符重复/,
+  );
+  assert.throws(
+    () => parseQuery(`**FROM** "M" **SORT** s **ASC** **DESC**`),
+    /方向修饰符重复/,
+  );
+  // 合法写法不受影响：末尾方向属于最后一个键
+  const q = parseQuery(`**FROM** "M" **SORT** a, b **DESC**`);
+  assert.equal(q.sort!.keys[0].dir, null);
+  assert.equal(q.sort!.keys[1].dir, "desc");
+});
+
+test("[ext] 并置简写与显式 AND 完全同构（含 **NOT**，§3）", () => {
+  const implicit = parseQuery(`**FROM** "M" **WHERE** [txt] **NOT** s %==% 'a'`);
+  const explicit = parseQuery(`**FROM** "M" **WHERE** [txt] **AND** **NOT** s %==% 'a'`);
+  assert.deepEqual(JSON.parse(JSON.stringify(implicit.where)), JSON.parse(JSON.stringify(explicit.where)));
+  // 原有简写不回归：[ext] 紧跟比较仍是隐式 AND
+  const plain = parseQuery(`**FROM** "M" **WHERE** [txt] s %==% 'a'`);
+  assert.equal((plain.where as { kind: string }).kind, "binary");
+});
+
+test("$变量$ 名须为合法 ident：含空格 / 逗号 → 词法报错（§2 VARIABLE）", () => {
+  assert.throws(() => parseQuery(`**FROM** "M" **SELECT** $a b$`), /非法变量名/);
+  assert.throws(() => parseQuery(`**FROM** "M" **SELECT** $a,b$`), /非法变量名/);
+  // 合法变量名不受影响（ident 允许 Unicode / 数字 / 下划线 / 带点）
+  const q = parseQuery(`**FROM** "M" **SELECT** $键名_1$`);
+  assert.equal((q.select as ColumnSel[])[0].expr.kind, "variable");
+});
+
+test("**LIMIT** 须为整数：小数 → 语法错误（§3 定稿）", () => {
+  assert.throws(() => parseQuery(`**FROM** "M" **LIMIT** 1.5`), /应为整数/);
+  assert.equal(parseQuery(`**FROM** "M" **LIMIT** 20`).limit, 20);
+});
+
 console.log(`\nDSQL 语言示例测试：全部 ${passed} 个通过`);
