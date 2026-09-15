@@ -1,7 +1,7 @@
 /**
  * @module tests/export
  * @description 导出套件：路径解析（越界 / 格式 / 非法字符）、CSV 转义、JSON 类型保留、
- * 行搜索文本与过滤口径、导出列结构（WITHOUT ID 协同）
+ * 行搜索文本与过滤口径、导出列结构（WITHOUT ID 协同）、列表视图列分组（内容列 / 辅助列）
  */
 
 import assert from "node:assert/strict";
@@ -19,6 +19,7 @@ import {
   toJSON,
 } from "@render/export";
 import { formatCell } from "@render/format";
+import { splitListColumns } from "@render/list-view";
 import { makeRow } from "./helpers";
 
 let passed = 0;
@@ -298,6 +299,52 @@ test("[分派] 导出仅含搜索命中行（与结果区所见一致）", () =>
   const json = JSON.parse(buildExport("json", RESULT, hit, false, 4).data) as Record<string, unknown>[];
   assert.equal(json.length, 1);
   assert.equal(json[0]["文件"], "任务B");
+});
+
+/* ---------- 列表视图列分组（纯函数） ---------- */
+
+test("[列表] 内容列 / 辅助列两分，两组合并即全部投影列（不丢弃任何列）", () => {
+  const r = run(`**TABLE_VIEW** **SELECT**
+  owner **AS** 负责人,
+  status,
+  priority %+% 1 **AS** $下一级$,
+  $下一级$ %*% 2 **AS** 折扣,
+  file.name,
+  **TOTAL** priority **AS** $总优先级$
+**FROM** "N"`);
+  const { primary, derived } = splitListColumns(r.columns);
+  // 内容列：裸字段 / 裸标识符别名的表达式列
+  assert.deepEqual(primary.map((c) => c.alias), ["负责人", "status", "折扣"]);
+  // 辅助列：变量池列（expr AS $变量$ / TOTAL 槽位）、虚拟列 file.*
+  assert.deepEqual(derived.map((c) => c.alias), ["下一级", "file.name", "总优先级"]);
+  assert.equal(primary.length + derived.length, r.columns.length);
+  // 两组各自保持投影顺序
+  assert.deepEqual([...primary, ...derived].map((c) => c.alias).sort(), r.columns.map((c) => c.alias).sort());
+});
+
+test("[列表] 变量池列一律归入辅助列：expr **AS** $变量$ / 裸 $槽位$ / TOTAL", () => {
+  const r = run(`**SELECT** status, priority %+% 1 **AS** $升级$, $过滤数$ **FROM** "N" **COUNT** true %==% true **AS** $过滤数$`);
+  const { primary, derived } = splitListColumns(r.columns);
+  assert.deepEqual(primary.map((c) => c.alias), ["status"]);
+  assert.deepEqual(derived.map((c) => c.alias), ["升级", "过滤数"]);
+});
+
+test("[列表] 虚拟列 file.* / this.* 归入辅助列", () => {
+  const r = run(`**SELECT** status, file.name, file.outlinks, this.状态 **FROM** "N"`);
+  const { primary, derived } = splitListColumns(r.columns);
+  assert.deepEqual(primary.map((c) => c.alias), ["status"]);
+  assert.deepEqual(derived.map((c) => c.alias), ["file.name", "file.outlinks", "this.状态"]);
+});
+
+test("[列表] 域扩展合成列（readonly）归入辅助列", () => {
+  const r = run(`**TABLE_VIEW** **SELECT** <人物>, $有装备$
+{
+  { **SELECT** name, wolf **FROM** "N" } **AS** <人物>
+  **YIELD** <人物>::name **IN** <人物>::wolf **AS** $有装备$
+}`);
+  const { primary, derived } = splitListColumns(r.columns);
+  assert.deepEqual(primary, []);
+  assert.deepEqual(derived.map((c) => c.alias), ["<人物>", "有装备"]);
 });
 
 if (failures.length > 0) {

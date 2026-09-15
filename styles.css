@@ -418,6 +418,26 @@
   cursor: pointer;
 }
 
+/* ===== 列表视图主行内容列（文件名之后的 行字段 / SEARCH 抽取字段 / 投影表达式列） ===== */
+.datashow-result__fields {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: 8px;
+  font-size: 12px;
+  vertical-align: baseline;
+}
+
+.datashow-result__field-name {
+  color: var(--text-faint);
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.datashow-result__field-value {
+  color: var(--text-normal);
+}
+
 /* ===== 列表视图派生变量辅助行 ===== */
 .datashow-result__derived {
   display: flex;

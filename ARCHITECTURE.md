@@ -1,6 +1,6 @@
 # DataShow 整体架构
 
-> 本文是工程的权威架构说明。当前版本：插件 **2.2.1** · 语言 **DSQL 2.5** · minAppVersion **1.4.4**。
+> 本文是工程的权威架构说明。当前版本：插件 **2.3.1** · 语言 **DSQL 2.6** · minAppVersion **1.4.4**。
 
 ## 1. 项目定位
 
@@ -30,7 +30,7 @@ DataShow 是面向 Obsidian 的元数据看板插件：
 ├── test-vault-local/    本地测试库（不入库，日常验收用）
 ├── manifest.json  package.json  tsconfig.json  versions.json
 ├── esbuild.config.mjs   styles.css
-└── README.md  ARCHITECTURE.md  CONTRIBUTING.md  API.md  CHANGELOG.md
+└── README.md  ARCHITECTURE.md  CONTRIBUTING.md  API.md  CHANGELOG.md + changelog-<起始>-<最后>.log（归档）
 ```
 
 **两个演示库的分工**：
@@ -90,6 +90,7 @@ main.ts                 装配：new 宿主适配器 → new 索引器 → regis
  │   ├─ panel-view.ts    面板：DSQL 编辑器 + 工具条 + 结果区分派
  │   ├─ sidebar-view.ts  侧栏：看板分组清单与折叠持久化
  │   └─ table-view.ts / list-view.ts / card-view.ts    三视图渲染
+ │       （list-view 的投影列两分 splitListColumns：内容列进主行、辅助列进缩进子行，列不丢弃）
  ├─ views/               Obsidian 视图壳（import "obsidian" 的合法位置之一）
  │   ├─ panel.ts / sidebar.ts   ItemView 生命周期 + 依赖注入
  │   ├─ settings-tab.ts  PluginSettingTab 设置页
@@ -163,7 +164,7 @@ npm test        # 单测十四套件（零 Obsidian 依赖）
   > 验证看板 SQL 不能直接用 `node` 跑 TS：`src/core/dsql/parser.ts` 用了参数属性
   > （`constructor(private tokens: Token[])`），node 的 strip-only 模式不支持，必须经 esbuild 打包。
 
-- **测试套件**（共 344 例）：
+- **测试套件**（共 348 例）：
 
 | 套件 | 领域 | 例数 |
 |---|---|---|
@@ -180,7 +181,7 @@ npm test        # 单测十四套件（零 Obsidian 依赖）
 | `tests/domains.test.ts` | 域扩展（词法硬约束、块与 YIELD 语法、作用域宽松/严格、不可传递性、IN/DIFF 展开、行展开基数、输出显示口径、§7 十项验收） | 48 |
 | `tests/viewSync.test.ts` | 视图与 SQL 双向同步 | 15 |
 | `tests/normalizeBoard.test.ts` | 看板字段校形 | 10 |
-| `tests/export.test.ts` | 结果导出（路径解析、列结构、行搜索文本、过滤、JSON 类型保留、CSV 转义与 CRLF、搜索命中行导出、empty 值四面口径） | 26 |
+| `tests/export.test.ts` | 结果导出（路径解析、列结构、行搜索文本、过滤、JSON 类型保留、CSV 转义与 CRLF、搜索命中行导出、empty 值四面口径）+ 列表视图列分组（内容列 / 辅助列） | 30 |
 
 ### 验收方式
 
@@ -196,17 +197,18 @@ npm test        # 单测十四套件（零 Obsidian 依赖）
 | 本文（[ARCHITECTURE.md](ARCHITECTURE.md)） | 架构分层、数据流、构建与测试流程 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 开发 / 版本 / 文档 / 提交规范 |
 | [API.md](API.md) | Obsidian 官方 API + 插件 API |
-| [CHANGELOG.md](CHANGELOG.md) | 更新日志 |
+| [CHANGELOG.md](CHANGELOG.md) | 更新日志（近期版本 + 归档导航；划分规范见 CONTRIBUTING §6.3） |
 | [docs/DSQL-语言规范.md](docs/DSQL-语言规范.md) | DSQL 语法与语义权威规范 |
 | [test-vault/README.md](test-vault/README.md) | 演示库看板清单与验收步骤 |
 
 ## 6. 现状
 
-**已实现**（插件 2.2.1 / DSQL 2.5）：DSQL 查询（表达式 / 函数 / 多级排序 / 自定义优先级 / 调试信息）、
+**已实现**（插件 2.3.1 / DSQL 2.6）：DSQL 查询（表达式 / 函数 / 多级排序 / 自定义优先级 / 调试信息）、
 TOTAL 全表聚合与 `$变量$` 派生体系、三种「无」语义分家（正常值 / 空容器 / 未赋值）、
 别名唯一性校验、frontmatter 重复键容错、`[ext]` 后缀过滤与非 md 数据源（自研 YAML 解析）、
 SEARCH 正文抽取子句（DSQL 2.4 起由 WHILE 驱动）、WHILE 循环驱动子句、
-COUNT 分类计数与槽位模型、表格 / 列表 / 卡片三视图、卡片视图内联编辑、
+COUNT 分类计数与槽位模型、域扩展（块 `{ }` 子域声明 + `**YIELD**` 的 `**IN**` / `**DIFF**` 跨域逐行关系，
+DSQL 2.6）、表格 / 列表 / 卡片三视图、卡片视图内联编辑、
 视图切换与 SQL 双向同步、索引增量更新、host 依赖模式分层（宿主能力收敛于 `host/obsidian`，
 核心层零 Obsidian 依赖）、侧栏搜索栏（分类 / 看板名过滤、保留折叠、隐藏空组）、
 三视图通用搜索（`.datashow-row` 统一行标记 + DOM 后置过滤，切视图保留搜索词）、

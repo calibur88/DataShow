@@ -3,7 +3,7 @@
 > 本 vault 是**干净提交库**，只用于版本提交；日常在 Obsidian 中验收请用 `../test-vault-local/`
 > （两者预置看板一致，本地测试产生的改动不会影响本 vault）。
 >
-> **DSQL v2.0 标记语法**：关键词用 `**` 包裹（如 `**SELECT**`）、运算符用 `%` 包裹（如 `%==%`）、
+> **DSQL 2.6 标记语法**：关键词用 `**` 包裹（如 `**SELECT**`）、运算符用 `%` 包裹（如 `%==%`）、
 > 字符串用单引号 `'值'`、路径用双引号 `"文件夹"`。视图关键词为 `**TABLE_VIEW**` /
 > `**LIST_VIEW**` / `**CARD_VIEW**`（旧 `**TABLE**` / `**LIST**` 已废除）。完整规范见
 > [`../docs/DSQL-语言规范.md`](../docs/DSQL-语言规范.md)。
@@ -589,5 +589,5 @@ cd ..        # 回到项目根目录
 npm run build   # 产出 dist/main.js，并自动同步到本 vault 与 test-vault-local 的
                 # .obsidian/plugins/data-show/
 npm test        # 单测十四套件：功能 / 数学 / DSQL语言 / store / 摄取层 / 索引器 /
-                # ext后缀过滤 / SEARCH / WHILE / COUNT / 域扩展 / viewSync / normalizeBoard / 导出（共 344 例）
+                # ext后缀过滤 / SEARCH / WHILE / COUNT / 域扩展 / viewSync / normalizeBoard / 导出（共 348 例）
 ```

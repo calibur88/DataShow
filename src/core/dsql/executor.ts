@@ -79,8 +79,13 @@ export interface SearchStat {
 export interface ResultSet {
   /** v2.0：TABLE_VIEW / LIST_VIEW / CARD_VIEW，由 query.view 直接透传 */
   view: ViewType;
-  /** 实际使用的列（SELECT * 已展开为字段并集） */
-  columns: { alias: string; expr: Expr; total?: true; readonly?: true }[];
+  /**
+   * 实际使用的列（SELECT * 已展开为字段并集）。
+   * `total` / `readonly` / `aliasVar` 三个标记供渲染层分辨列的来源（取值逻辑不读它们）：
+   * `total` = TOTAL / COUNT 填充的槽位常量列（值取变量表）；`readonly` = 域扩展合成列；
+   * `aliasVar` = `expr **AS** $变量$`（变量池列）。
+   */
+  columns: { alias: string; expr: Expr; total?: true; readonly?: true; aliasVar?: true }[];
   rows: DataRow[];
   /**
    * DSQL 1.4：全局变量表（**TOTAL** 聚合 + DSQL 2.3 **COUNT** 计数填充的槽位，裸名键）。
@@ -495,7 +500,13 @@ function resolveColumns(select: Query["select"], rows: DataRow[], globals: Map<s
       }
       continue;
     }
-    cols.push({ alias: sel.alias ?? defaultAlias(sel.expr, i), expr: sel.expr, total: sel.total });
+    cols.push({
+      alias: sel.alias ?? defaultAlias(sel.expr, i),
+      expr: sel.expr,
+      total: sel.total,
+      // aliasVar：`expr **AS** $变量$`（变量池列）——渲染层据此归入辅助列，取值逻辑不读
+      ...(sel.aliasVar ? { aliasVar: true as const } : {}),
+    });
   }
   return cols;
 }
