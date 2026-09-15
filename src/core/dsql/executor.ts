@@ -10,12 +10,21 @@
  * 语义：类型不匹配/除零/缺字段为非致命（求值 null，计入 warnings）；算术 / 比较做
  * Number() 隐式转换（非原始值守卫在前，见 §6.3 补丁）；排序 UTF-8 字节序确定性方案。
  * 视图关键词仅透传 ResultSet.view，不影响数据管线（TABLE_VIEW / LIST_VIEW / CARD_VIEW）。
+ *
+ * DSQL 2.6：`q.domains` 非空时整条查询改由域扩展执行器（domains.ts）接管，本管线不参与。
+ * 表达式求值与 FROM 判定分别下沉到 expr.ts / source.ts，本文件仅做管线编排。
  */
 
-import type { BinOp, Expr, Query, Source, WhileNode } from "./ast";
-import { toNumber } from "./coerce";
-import { callFunction } from "./functions";
-import { EMPTY, type DataRow, type FieldValue, type ViewType } from "./types";
+import type { Expr, Query, Source, WhileNode } from "./ast";
+import { compareUtf8, isNonPrimitive, stringValue, stripEmpty, toNumber, truthy } from "./coerce";
+import { executeDomainQuery } from "./domains";
+import { evaluateExpr, resolveField, type FieldTracker, type WarnSink } from "./expr";
+import { collectExtFilters, collectSourceFolders, matchFolder, matchSource } from "./source";
+import type { DataRow, FieldValue, ViewType } from "./types";
+
+export { evaluateExpr, resolveField, type FieldTracker, type WarnSink } from "./expr";
+export { EXT_ALL, collectExtFilters, collectSourceFolders, matchFolder, matchSource, type ExtFilterState } from "./source";
+export { compareUtf8, truthy } from "./coerce";
 
 /* ---------- 调试信息（6.6） ---------- */
 
@@ -50,6 +59,8 @@ export interface QueryDebug {
   search: SearchStat[];
   /** DSQL 2.3：各 COUNT 计数项结果（调试页 COUNT 行） */
   count: string[];
+  /** DSQL 2.6：域扩展查询的阶段摘要（子域行数 / 行展开 / **YIELD** 槽位；旧算法为空） */
+  domains?: string[];
   executionTimeMs: number;
 }
 
@@ -69,7 +80,7 @@ export interface ResultSet {
   /** v2.0：TABLE_VIEW / LIST_VIEW / CARD_VIEW，由 query.view 直接透传 */
   view: ViewType;
   /** 实际使用的列（SELECT * 已展开为字段并集） */
-  columns: { alias: string; expr: Expr; total?: true }[];
+  columns: { alias: string; expr: Expr; total?: true; readonly?: true }[];
   rows: DataRow[];
   /**
    * DSQL 1.4：全局变量表（**TOTAL** 聚合 + DSQL 2.3 **COUNT** 计数填充的槽位，裸名键）。
@@ -136,6 +147,9 @@ export function executeQuery(
   ctx: DataRow | null,
   opts: ExecuteOptions = {},
 ): ResultSet {
+  // DSQL 2.6：域扩展查询（块 { } 语法）走独立执行器，本管线不参与
+  if (q.domains) return executeDomainQuery(q, rows, opts);
+
   const started = now();
   const state = createState(q, ctx, opts);
 
@@ -491,359 +505,7 @@ function defaultAlias(expr: Expr, index: number): string {
   return `列${index + 1}`;
 }
 
-/* ---------- 表达式求值 ---------- */
-
-export type FieldTracker = (row: DataRow, path: string, value: FieldValue) => FieldValue;
-export type WarnSink = (message: string, type?: string) => void;
-
-/** empty 值在除 empty() 外的一切运算中按 null 传播（DSQL 1.5 三值语义）。 */
-function stripEmpty(v: FieldValue): FieldValue {
-  return v === EMPTY ? null : v;
-}
-
-/**
- * 求值表达式（面板渲染单元格与执行器共用）。类型不匹配等非致命 → null。
- *
- * @param expr - 表达式 AST
- * @param row - 当前行
- * @param ctx - this 上下文行（无则 null）
- * @param track - 可选字段访问追踪器（调试：记录字段缺失）
- * @param warn - 可选警告接收器（调试：类型不匹配等）
- * @param vars - 可选变量表（$变量$ 取值）
- * @returns 求值结果；非致命错误返回 null
- */
-export function evaluateExpr(
-  expr: Expr,
-  row: DataRow,
-  ctx: DataRow | null,
-  track?: FieldTracker,
-  warn?: WarnSink,
-  vars?: ReadonlyMap<string, FieldValue>,
-): FieldValue {
-  switch (expr.kind) {
-    case "lit":
-      return expr.value;
-    case "variable":
-      return vars?.get(expr.name) ?? null;
-    case "extFilter":
-      // 行级判断（禁止恒 true 的并集偷懒）：exts 为空（[]）→ 恒 true；
-      // 否则按该节点自己的 exts 严格相等匹配（原样字符串，无归一化）。
-      // [txt] AND [mp4] 由此得空结果；[txt] OR status %==% 'x' 的 OR 意图由此保留。
-      return expr.exts.length === 0 || expr.exts.includes(row.file.ext);
-    case "field": {
-      const v = resolveField(row, expr.path, ctx);
-      return track ? track(row, expr.path, v) : v;
-    }
-    case "call": {
-      const args = expr.args.map((a) => evaluateExpr(a, row, ctx, track, warn, vars));
-      // 未知函数在词法层拦截（lexer/parser 只放行 FUNCTIONS 表内名字），此处无需兜底
-      return callFunction(expr.name, expr.name === "empty" ? args : args.map(stripEmpty));
-    }
-    case "unary": {
-      if (expr.op === "not") return !truthy(evaluateExpr(expr.expr, row, ctx, track, warn, vars));
-      // 一元正负号仅作用于数值（§6.3）：非数值 → null，不计 warning
-      const v = stripEmpty(evaluateExpr(expr.expr, row, ctx, track, warn, vars));
-      return typeof v === "number" ? (expr.op === "-" ? -v : v) : null;
-    }
-    case "binary":
-      return evalBinary(expr.op, expr.left, expr.right, row, ctx, track, warn, vars);
-  }
-}
-
-function evalBinary(
-  op: BinOp,
-  left: Expr,
-  right: Expr,
-  row: DataRow,
-  ctx: DataRow | null,
-  track?: FieldTracker,
-  warn?: WarnSink,
-  vars?: ReadonlyMap<string, FieldValue>,
-): FieldValue {
-  if (op === "and") {
-    return truthy(evaluateExpr(left, row, ctx, track, warn, vars)) && truthy(evaluateExpr(right, row, ctx, track, warn, vars));
-  }
-  if (op === "or") {
-    return truthy(evaluateExpr(left, row, ctx, track, warn, vars)) || truthy(evaluateExpr(right, row, ctx, track, warn, vars));
-  }
-  const l = stripEmpty(evaluateExpr(left, row, ctx, track, warn, vars));
-  const r = stripEmpty(evaluateExpr(right, row, ctx, track, warn, vars));
-
-  switch (op) {
-    case "==":
-      return looseEquals(l, r);
-    case "!=":
-      return !looseEquals(l, r);
-    case ">":
-    case "<":
-    case ">=":
-    case "<=": {
-      return compareOrdering(op, l, r);
-    }
-    case "||":
-      return l == null || r == null ? null : `${stringValue(l)}${stringValue(r)}`;
-    case "+":
-    case "-":
-    case "*":
-    case "/":
-    case "%":
-    case "^": {
-      // null / empty 守卫：结果 null，不计 warning（empty 已在上方 stripEmpty 归 null）
-      if (l == null || r == null) return null;
-      // 非原始值守卫（数组等）：禁止 Number([5]) === 5 式静默转换
-      if (Array.isArray(l) || Array.isArray(r)) {
-        warn?.(`算术运算 %${op}% 作用于非原始值（数组）`, "类型不匹配");
-        return null;
-      }
-      const ln = toNumber(l);
-      const rn = toNumber(r);
-      if (ln === null || rn === null) {
-        warn?.(`算术运算 %${op}% 作用于非数字`, "类型不匹配");
-        return null;
-      }
-      return applyArithmetic(op, ln, rn, warn);
-    }
-  }
-  return null;
-}
-
-/** 算术求值：除零 / 取模零 → null；结果非有限数（NaN / ±Infinity）→ null（计入 warnings）。 */
-function applyArithmetic(op: "+" | "-" | "*" | "/" | "%" | "^", ln: number, rn: number, warn?: WarnSink): FieldValue {
-  const fin = (n: number): FieldValue => {
-    if (!Number.isFinite(n)) {
-      warn?.(`%${op}% 结果非有限数`, "类型不匹配");
-      return null;
-    }
-    return n;
-  };
-  switch (op) {
-    case "+": return fin(ln + rn);
-    case "-": return fin(ln - rn);
-    case "*": return fin(ln * rn);
-    case "/":
-      if (rn === 0) { warn?.("%/% 除零", "除零"); return null; }
-      return fin(ln / rn);
-    case "%":
-      if (rn === 0) { warn?.("%%% 取模零", "除零"); return null; }
-      return fin(ln % rn);
-    case "^": {
-      const p = Math.pow(ln, rn);
-      if (!Number.isFinite(p)) { warn?.("%^% 结果非有限数（如负数开偶次方）", "类型不匹配"); return null; }
-      return p;
-    }
-  }
-}
-
-/** 非原始值判定（数组；null / 原始类型为原始值）。 */
-function isNonPrimitive(v: FieldValue): boolean {
-  return Array.isArray(v);
-}
-
-/**
- * == / != ：null 参与 → 同一性（null == null 为 true，其余 false；!= 取反）；
- * 非原始值 → false（守卫写在一切 Number() / 隐式字符串化之前，[5] %==% "5" 不因 toString 漏成 true）；
- * 否则两边都能 Number() 转出有限数（空串 / 全空白视为转不出）→ 数值比；
- * 两边都转不出 → 字符串比（UTF-8 字节序）；一边能转一边不能 → false。
- */
-function looseEquals(l: FieldValue, r: FieldValue): boolean {
-  if (l == null || r == null) return l === r;
-  if (isNonPrimitive(l) || isNonPrimitive(r)) return false;
-  const ln = toNumber(l);
-  const rn = toNumber(r);
-  if (ln !== null && rn !== null) return ln === rn;
-  if (ln === null && rn === null) return compareUtf8(stringValue(l), stringValue(r)) === 0;
-  return false;
-}
-
-/** > < >= <= ：口径同 looseEquals（null / 非原始值 → false；同载数值比、同不转字符串比、混合 → false）。 */
-function compareOrdering(op: ">" | "<" | ">=" | "<=", l: FieldValue, r: FieldValue): boolean {
-  if (l == null || r == null) return false;
-  if (isNonPrimitive(l) || isNonPrimitive(r)) return false;
-  const ln = toNumber(l);
-  const rn = toNumber(r);
-  let c: number;
-  if (ln !== null && rn !== null) c = ln - rn;
-  else if (ln === null && rn === null) c = compareUtf8(stringValue(l), stringValue(r));
-  else return false;
-  return op === ">" ? c > 0 : op === "<" ? c < 0 : op === ">=" ? c >= 0 : c <= 0;
-}
-
-function stringValue(v: FieldValue): string {
-  if (typeof v === "boolean") return v ? "true" : "false";
-  return String(v);
-}
-
-/**
- * 字段解析：file.* → 文件元数据；this.* → 上下文行；其余 → frontmatter 字段。
- *
- * @param row - 当前行
- * @param path - 字段路径（可含点）
- * @param ctx - this 上下文行（无则 null）
- * @returns 字段值；路径不存在返回 null
- */
-export function resolveField(row: DataRow, path: string, ctx: DataRow | null): FieldValue {
-  if (path.startsWith("this.")) {
-    if (!ctx) return null;
-    return resolveOn(ctx, path.slice(5));
-  }
-  return resolveOn(row, path);
-}
-
-function resolveOn(row: DataRow, path: string): FieldValue {
-  const parts = path.split(".");
-  if (parts[0] === "file") {
-    const key = parts[1];
-    if (parts.length === 2 && key in row.file) {
-      return row.file[key as keyof typeof row.file] as FieldValue;
-    }
-    return null;
-  }
-  if (parts.length === 1) return row.fields[parts[0]] ?? null;
-  return row.fields[parts[0]] ?? row.fields[path] ?? null;
-}
-
-/* ---------- WHERE / 真值 / 比较 ---------- */
-
-/**
- * 裸真值判断（DSQL 1.5 三值语义）：empty 值、null、0、false、空串、空数组 → 假；其余一切值为真。
- *
- * @param v - 待判断的值
- * @returns 真值判定结果
- */
-export function truthy(v: FieldValue): boolean {
-  return (
-    v != null && v !== EMPTY && v !== 0 && v !== false &&
-    !(Array.isArray(v) && v.length === 0) && v !== ""
-  );
-}
-
-const utf8Encoder = new TextEncoder();
-
-/**
- * UTF-8 字节序比较（确定性排序）：逐字节比较，公共前缀相等则继续向后比较
- * （递归下降），短字符串在前。例：你好AAAA < 你好AAAB；"a" < "你"（0x61 < 0xE4）。
- *
- * @param a - 左侧字符串
- * @param b - 右侧字符串
- * @returns 负数（a 在前）/ 0（相等）/ 正数（b 在前）
- */
-export function compareUtf8(a: string, b: string): number {
-  if (a === b) return 0; // 同一性快路径：跳过编码分配
-  const ba = utf8Encoder.encode(a);
-  const bb = utf8Encoder.encode(b);
-  const n = Math.min(ba.length, bb.length);
-  for (let i = 0; i < n; i++) {
-    if (ba[i] !== bb[i]) return ba[i] - bb[i];
-  }
-  return ba.length - bb.length;
-}
-
-/* ---------- [ext] 后缀过滤（文件级收集 / 目录范围） ---------- */
-
-/**
- * [ext] 读取范围哨兵：WHERE 中至少出现一个 `[]` → 读 FROM 目录下全部文件。
- * 三态严格区分：null（没写 [ext]，零触发）≠ EXT_ALL（[]，全量）≠ Set（指定后缀并集）。
- */
-export const EXT_ALL = Symbol("DSQL:extAll");
-
-export type ExtFilterState = null | typeof EXT_ALL | Set<string>;
-
-/**
- * 遍历 WHERE AST 收集所有 ExtFilterNode 的读取范围（规范 §6.9）：
- * - 没写任何 [ext] → null（不触发文件级分派，只用行仓库 md 行）；
- * - 至少一个 []   → EXT_ALL（读 FROM 目录下全部文件；与 [txt] 同现时归 ALL）；
- * - 其余          → Set（所有 [ext] 内容的并集，仅用于读取范围；
- *                    行级求值仍用各节点自己的 exts，见 evaluateExpr）。
- */
-export function collectExtFilters(where: Expr | null): ExtFilterState {
-  if (!where) return null;
-  let state: ExtFilterState = null;
-  const visit = (expr: Expr): void => {
-    switch (expr.kind) {
-      case "extFilter":
-        if (expr.exts.length === 0) {
-          state = EXT_ALL;
-          return;
-        }
-        if (state === EXT_ALL) return; // ALL 优先级最高，不降级为并集
-        if (!(state instanceof Set)) state = new Set<string>();
-        for (const ext of expr.exts) (state as Set<string>).add(ext);
-        return;
-      case "binary":
-        visit(expr.left);
-        visit(expr.right);
-        return;
-      case "unary":
-        visit(expr.expr);
-        return;
-      case "call":
-        for (const arg of expr.args) visit(arg);
-        return;
-      default:
-        return;
-    }
-  };
-  visit(where);
-  return state;
-}
-
-/**
- * 收集 FROM 中全部叶子目录路径（含子目录语义由 listFiles 实现侧保证）；
- * 标签叶子不参与（标签源不触发文件级非 md 读取）。无任何目录叶子时返回空数组。
- * AND / OR 的目录组合语义不在本函数展开——文件级过滤统一用 matchFolder。
- */
-export function collectSourceFolders(source: Source): string[] {
-  switch (source.kind) {
-    case "folder":
-      return [source.path];
-    case "tag":
-      return [];
-    case "op":
-      return [...collectSourceFolders(source.left), ...collectSourceFolders(source.right)];
-  }
-}
-
-/** FROM 目录语义在文件级（folder）的判定：与 matchSource 的 folder 分支一致；标签叶子视为无约束。 */
-export function matchFolder(source: Source, folder: string): boolean {
-  switch (source.kind) {
-    case "folder": {
-      const p = source.path.toLowerCase();
-      const f = folder.toLowerCase();
-      return f === p || f.startsWith(`${p}/`) || p === "";
-    }
-    case "tag":
-      return true;
-    case "op":
-      return source.op === "and"
-        ? matchFolder(source.left, folder) && matchFolder(source.right, folder)
-        : matchFolder(source.left, folder) || matchFolder(source.right, folder);
-  }
-}
-
-/* ---------- FROM ---------- */
-
-/**
- * FROM 匹配判定（导出供调用方在 SEARCH body 预读时圈定 FROM 命中范围）。
- */
-export function matchSource(source: Source, row: DataRow): boolean {
-  switch (source.kind) {
-    case "folder": {
-      const p = source.path.toLowerCase();
-      const f = row.file.folder.toLowerCase();
-      return f === p || f.startsWith(`${p}/`) || p === "";
-    }
-    case "tag": {
-      const tags = row.fields.tags;
-      if (!Array.isArray(tags)) return false;
-      const want = source.tag.replace(/^#/, "").toLowerCase();
-      return tags.some((t) => String(t).replace(/^#/, "").toLowerCase() === want);
-    }
-    case "op":
-      return source.op === "and"
-        ? matchSource(source.left, row) && matchSource(source.right, row)
-        : matchSource(source.left, row) || matchSource(source.right, row);
-  }
-}
+/* ---------- [ext] / FROM ---------- */
 
 /** 收集叶子数据源及其各自命中行数（sourceStats）。 */
 function collectSourceStats(source: Source, rows: DataRow[]): SourceStat[] {
@@ -875,7 +537,7 @@ function sortRows(
   track?: FieldTracker,
   onCompare?: () => void,
 ): DataRow[] {
-  // 预计算每行的键值（Schwartzian 变换，避免比较中重复求值）
+  // 预计算每行的键值（Schwartzian 变换，避免比较中重复求值）；empty 值先归 null（§6.3）
   const keyed = rows.map((row) => ({
     row,
     keys: sort.keys.map((k) => stripEmpty(evaluateExpr(k.expr, row, ctx, track))),

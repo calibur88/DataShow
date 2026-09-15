@@ -22,7 +22,7 @@ DataShow 是面向 Obsidian 的元数据看板插件：
 根目录/
 ├── src/                 插件源码（唯一入口 src/main.ts；按 host / core / controller /
 │                        render / views / settings / utils 分层，详见 §3）
-├── tests/               单元测试（十三套件）
+├── tests/               单元测试（十四套件）
 ├── scripts/test.mjs     测试运行器
 ├── docs/                DSQL 语言规范
 ├── dist/                构建产物（不入库）
@@ -70,8 +70,12 @@ main.ts                 装配：new 宿主适配器 → new 索引器 → regis
  │       └─ ui-host.ts           Notice + 控制台 → IUiHost
  ├─ core/                可移植核心（零宿主依赖）
  │   ├─ dsql/            DSQL 语言层（别名 @dsql/*；独立 tsconfig，可独立发版）
- │   │   ├─ types.ts     语言层类型出口：DataRow / FileMeta / FieldValue / EMPTY / ViewType
- │   │   ├─ coerce.ts    §6.3 隐式数值转换：算术 / 比较 / 排序 / TOTAL / 数值函数共用同一口径
+ │   │   ├─ types.ts     语言层类型出口：DataRow / FileMeta / FieldValue / FieldObject / EMPTY / ViewType
+ │   │   │               + DomainSlotValue（域扩展槽位值的显示层标记，语言层不读）
+ │   │   ├─ coerce.ts    §6.3 值语义单一事实源：隐式数值转换 / 比较 / 真值 / UTF-8 字节序 / empty 传播
+ │   │   ├─ expr.ts      表达式求值：evaluateExpr / resolveField（面板渲染与执行器共用）
+ │   │   ├─ source.ts    FROM 判定与 [ext] 读取范围收集（matchSource / collectExtFilters / EXT_ALL）
+ │   │   ├─ domains.ts   域扩展执行器（DSQL 2.6）：子域绑定求值 → YIELD 展开 → 行展开 → 顶层投影（输出列标签在此定稿）
  │   │   └─ lexer.ts / parser.ts / ast.ts / functions.ts / executor.ts
  │   └─ index/
  │       ├─ store.ts     行仓库：缓存 + 变更通知 + 摄取警告归档
@@ -146,7 +150,7 @@ main ──► views ──► render ──► controller ──► core ──
 npm install
 npm run dev     # watch 模式：src / manifest.json / styles.css 变化即重建，并同步到两个测试库
 npm run build   # tsc 类型检查 + esbuild 生产构建 → dist/main.js
-npm test        # 单测十三套件（零 Obsidian 依赖）
+npm test        # 单测十四套件（零 Obsidian 依赖）
 ```
 
 - **构建流程**：`esbuild.config.mjs` 以 `src/main.ts` 为入口，产出 `dist/main.js`；
@@ -159,7 +163,7 @@ npm test        # 单测十三套件（零 Obsidian 依赖）
   > 验证看板 SQL 不能直接用 `node` 跑 TS：`src/core/dsql/parser.ts` 用了参数属性
   > （`constructor(private tokens: Token[])`），node 的 strip-only 模式不支持，必须经 esbuild 打包。
 
-- **测试套件**（共 296 例）：
+- **测试套件**（共 344 例）：
 
 | 套件 | 领域 | 例数 |
 |---|---|---|
@@ -173,6 +177,7 @@ npm test        # 单测十三套件（零 Obsidian 依赖）
 | `tests/search.test.ts` | SEARCH 正文抽取（语法、STRING 词法、正则、求值、冲突、body 来源、§6.3 补丁） | 40 |
 | `tests/while.test.ts` | WHILE 循环驱动（语法、词法隔离、迭代语义、边界 parse 期校验、SEARCH 耦合、TOTAL/COUNT 口径） | 20 |
 | `tests/count.test.ts` | COUNT 分类计数（语法、槽位模型、口径、惯用法、错误路径） | 23 |
+| `tests/domains.test.ts` | 域扩展（词法硬约束、块与 YIELD 语法、作用域宽松/严格、不可传递性、IN/DIFF 展开、行展开基数、输出显示口径、§7 十项验收） | 48 |
 | `tests/viewSync.test.ts` | 视图与 SQL 双向同步 | 15 |
 | `tests/normalizeBoard.test.ts` | 看板字段校形 | 10 |
 | `tests/export.test.ts` | 结果导出（路径解析、列结构、行搜索文本、过滤、JSON 类型保留、CSV 转义与 CRLF、搜索命中行导出、empty 值四面口径） | 26 |

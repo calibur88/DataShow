@@ -507,6 +507,9 @@ export function createPanelController(
     for (const msg of dbg.count ?? []) {
       entries.push({ op: "COUNT", message: msg });
     }
+    for (const msg of dbg.domains ?? []) {
+      entries.push({ op: "DOMAIN", message: msg });
+    }
     for (const miss of dbg.fieldMisses) {
       entries.push({
         op: "FIELD",

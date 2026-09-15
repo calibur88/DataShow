@@ -8,7 +8,7 @@
  */
 
 import { evaluateExpr, type ResultSet } from "@dsql/executor";
-import type { DataRow, FieldValue } from "@dsql/types";
+import { isDomainSlotValue, type DataRow, type FieldValue } from "@dsql/types";
 import { formatCell } from "@render/format";
 
 /** 支持的导出格式（由扩展名决定） */
@@ -216,10 +216,19 @@ export function buildExport(
   return { format, data: toJSON(result, rows, withoutId) };
 }
 
-/** JSON 取值归一：undefined / symbol（empty 哨兵）→ null，数组递归处理 */
-function toJsonValue(value: FieldValue | undefined): unknown {
+/**
+ * JSON 取值归一：undefined / symbol（empty 哨兵）→ null；域扩展槽位标记解包为原值
+ * （JSON 不做 `[...]` 文本化）；数组与域对象递归为结构化形态，null / empty 保留键。
+ */
+function toJsonValue(value: unknown): unknown {
   if (value === undefined || typeof value === "symbol") return null;
-  if (Array.isArray(value)) return value.map((v) => toJsonValue(v as FieldValue));
+  if (isDomainSlotValue(value)) return toJsonValue(value.value);
+  if (Array.isArray(value)) return value.map((v) => toJsonValue(v));
+  if (typeof value === "object" && value !== null) {
+    const record: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) record[key] = toJsonValue(item);
+    return record;
+  }
   return value;
 }
 

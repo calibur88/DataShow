@@ -56,7 +56,6 @@ export interface VariableExpr {
   /** 裸名（书写时 $平均分$ → name "平均分"） */
   name: string;
 }
-
 /**
  * [ext] 后缀过滤原子（仅 **WHERE** 表达式合法）：
  * - exts 为原样字符串（不归一化：不去点、不转大小写，匹配时严格相等）；
@@ -147,6 +146,11 @@ export interface Query {
   count: CountItemNode[] | null;
   sort: SortClause | null;
   limit: number | null;
+  /**
+   * DSQL 2.6：域扩展查询（顶层 `**SELECT** <域>` + 块 `{ }`）。
+   * 非 null 时走域扩展算法（本结构的其余旧字段仅为占位），null 时走 DSQL 2.5 旧算法。
+   */
+  domains?: DomainQuery | null;
 }
 
 /**
@@ -178,4 +182,128 @@ export interface SearchItemNode {
   alias: string;
   line: number;
   col: number;
+}
+
+/* ---------- DSQL 2.6 域扩展（块 { } 语法） ---------- */
+
+/** 顶层 `**SELECT**` 项：只接受单级 `<域>` 或 `$槽位$`（`<域>::字段` 为语法错误） */
+export interface DomainRef {
+  kind: "domain";
+  /** 域名（不含尖括号） */
+  name: string;
+  line: number;
+  col: number;
+}
+
+export interface SlotRef {
+  kind: "slot";
+  /** 槽位裸名 */
+  name: string;
+  line: number;
+  col: number;
+}
+
+export type TopSelectItem = DomainRef | SlotRef;
+
+/** 跨域引用 `<域>::字段`（词法层保证只允许一级） */
+export interface CrossRef {
+  domain: string;
+  field: string;
+  line: number;
+  col: number;
+}
+
+/** **YIELD** 运算符：**IN** 单射拆分逐元素判断 / **DIFF** 左参全集减右参逐行值 */
+export type YieldOp = "in" | "diff";
+
+export interface YieldItem {
+  op: YieldOp;
+  left: CrossRef;
+  right: CrossRef;
+  /** 输出槽位裸名；null = 无 **AS**（无绑定、不投影，计算照常执行） */
+  slot: string | null;
+  line: number;
+  col: number;
+}
+
+export interface YieldClause {
+  items: YieldItem[];
+  line: number;
+  col: number;
+}
+
+/** 子查询 `**SELECT**` 字段项：裸标识符（行字段）或单级 `<域>`（域引用） */
+export type SubFieldRef =
+  | { kind: "field"; name: string }
+  | { kind: "domain"; name: string; line: number; col: number };
+
+/** 子查询：`**SELECT** select_list **FROM** source [**WHERE** expr]`（**FROM** 必填） */
+export interface SubQuery {
+  select: SubFieldRef[];
+  from: Source;
+  where: Expr | null;
+}
+
+/** 子域：`{ sub_select { subdomain } } **AS** <域>`（**AS** 必填） */
+export interface SubDomain {
+  sub: SubQuery;
+  /** 嵌套子域（有序） */
+  children: SubDomain[];
+  /** 域名（`**AS** <域>` 的裸名） */
+  name: string;
+  /** `<域>` token 位置（未声明域 / 不外暴露等错误定位用） */
+  line: number;
+  col: number;
+}
+
+/** 块内条目（保持文本顺序：**YIELD** 严格查找依赖它） */
+export type BlockItem =
+  | { kind: "subdomain"; node: SubDomain }
+  | { kind: "yield"; node: YieldClause };
+
+/** 域绑定（语义分析产物；同名域在不同层各为独立绑定） */
+export interface DomainBinding {
+  /** 绑定唯一编号（按声明顺序） */
+  id: number;
+  name: string;
+  /** 父作用域绑定 id（根块子域为 null） */
+  parent: number | null;
+  /** 嵌套深度（根块子域为 0） */
+  depth: number;
+  /** 求值顺序（拓扑序，越小越先算——子查询 SELECT 前向引用不构成文本序约束） */
+  order: number;
+  sub: SubQuery;
+  /** 与 `sub.select` 一一对应的域引用解析结果（-1 = 该位是行字段，其余为绑定 id） */
+  refs: number[];
+  /** 嵌套子域绑定 id（有序） */
+  children: number[];
+}
+
+/** 顶层投影列：单级 `<域>` 或 **YIELD** 填充的 `$槽位$` */
+export type DomainColumn =
+  | { kind: "domain"; def: number; alias: string }
+  | { kind: "slot"; slot: string; alias: string };
+
+/** **YIELD** 项（域引用已解析为绑定 id） */
+export interface DomainYieldItem {
+  op: YieldOp;
+  left: { def: number; field: string };
+  right: { def: number; field: string };
+  slot: string | null;
+}
+
+/** 域扩展查询的语义分析产物（执行期直接消费） */
+export interface DomainPlan {
+  bindings: DomainBinding[];
+  columns: DomainColumn[];
+  yields: DomainYieldItem[];
+  /** 参与行展开（笛卡尔积）的域绑定 id（按声明序去重；无 **YIELD** 时 = 根块全部子域） */
+  rowDomains: number[];
+}
+
+/** 域扩展查询（有 block 时替代旧算法；无 block 的查询不构造本节点） */
+export interface DomainQuery {
+  select: TopSelectItem[];
+  block: BlockItem[];
+  plan: DomainPlan;
 }

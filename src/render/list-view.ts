@@ -38,10 +38,11 @@ export function renderListView(args: ListViewArgs): HTMLElement {
     return wrap;
   }
 
-  // 派生列：TOTAL / 变量 / file.* / this.* —— 作为缩进子信息
+  // 派生列：TOTAL / 变量 / file.* / this.* / 域扩展合成列（readonly 已标）—— 作为缩进子信息
   const derived = result.columns.filter(
     (c) =>
       c.total ||
+      c.readonly ||
       c.expr.kind === "variable" ||
       (c.expr.kind === "field" &&
         (c.expr.path.startsWith("file.") || c.expr.path.startsWith("this."))),

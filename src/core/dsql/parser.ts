@@ -12,7 +12,11 @@
  * 旧 **TABLE** / **LIST** 已被词法器废除，落到"未知关键词"分支抛 LexError。
  */
 
-import type { BinOp, ColumnSel, CountItemNode, Expr, Query, SearchItemNode, SortClause, SortKey, Source, WhileNode } from "./ast";
+import type {
+  BinOp, BlockItem, ColumnSel, CountItemNode, CrossRef, DomainBinding, DomainColumn, DomainPlan,
+  DomainRef, DomainQuery, DomainYieldItem, Expr, Query, SearchItemNode, SortClause, SortKey, Source,
+  SubDomain, SubFieldRef, SubQuery, TopSelectItem, WhileNode, YieldClause, YieldItem, YieldOp,
+} from "./ast";
 import { FUNCTIONS, LexError, Lexer, type Token } from "./lexer";
 import type { FieldValue, ViewType } from "./types";
 
@@ -123,6 +127,9 @@ class Parser {
       view = "CARD_VIEW";
     }
 
+    // DSQL 2.6：域扩展查询（顶层 **SELECT** <域> + 块 { }）走独立语法，不进入旧子句循环
+    if (this.isDomainQuery()) return this.parseDomainQuery(view);
+
     let select: ColumnSel[] | "*" = "*";
     let from: Source | null = null;
     let where: Expr | null = null;
@@ -190,6 +197,10 @@ class Parser {
         this.expectOnce(seen, "WITHOUT ID");
         this.advance();
         this.expectKw("ID");
+      } else if (this.isMarked("YIELD") || this.isMarked("IN") || this.isMarked("DIFF")) {
+        // 域扩展语法的三个新关键词出现在旧算法区间内 → 前件缺失（缺块或缺 YIELD）
+        const tok = this.peek();
+        throw this.err(tok, `**${tok.value}** 只可写在域扩展查询中（缺少块 { } 或 **YIELD** 作为前件）`);
       } else {
         break;
       }
@@ -239,8 +250,272 @@ class Parser {
       throw this.err(trailing, `多余的查询子句「${describe(trailing)}」（子句：SELECT / FROM / WHERE / WHILE / SEARCH / COUNT / SORT / LIMIT / WITHOUT ID，每条至多一次）`);
     }
 
-    return { view, withoutId: seen.has("WITHOUT ID"), select, from, where, search, while: whileNode, count, sort, limit };
+    return { view, withoutId: seen.has("WITHOUT ID"), select, from, where, search, while: whileNode, count, sort, limit, domains: null };
   }
+
+  /* ---------- 域扩展（DSQL 2.6：块 { } 语法） ---------- */
+
+  /**
+   * 域模式探测（不消费 token）：当前 token 位置须为顶层 `**SELECT**`，其 select 列表由 `<域>` /
+   * `$槽位$` 组成，且满足其一——列表后紧跟 `{`（有块），或列表中出现过 `<域>`。
+   * 后者即「有 `<域>` 而无块」：仍走域算法，由 parseDomainQuery 报「未声明域」。
+   *
+   * @returns 是否为域扩展查询
+   */
+  private isDomainQuery(): boolean {
+    let i = this.pos;
+    const sel = this.tokens[i];
+    if (!sel || sel.type !== "marked" || sel.value !== "SELECT") return false;
+    i++;
+    let sawDomain = false;
+    for (;;) {
+      const item = this.tokens[i];
+      if (item && item.type === "domain") sawDomain = true;
+      else if (item && item.type === "variable") {
+        // 裸 `$槽位$` 声明：旧算法同样接受，故仅继续扫描，不足以判定域模式
+      } else return false;
+      i++;
+      const sep = this.tokens[i];
+      if (sep && sep.type === "punct" && sep.value === ",") {
+        i++;
+        continue;
+      }
+      break;
+    }
+    const next = this.tokens[i];
+    if (next && next.type === "punct" && next.value === "{") return true;
+    return sawDomain;
+  }
+
+  /**
+   * 域扩展查询：`**SELECT** select_item {, select_item} block`。
+   * 顶层 `select_item` 只接受单级 `<域>` 或 `$槽位$`（`<域>::字段` 为语法错误——不可传递性，
+   * 否则顶层声明会依赖内层结构而形成循环）；块内为子域 `{ … } **AS** <域>` 与 `**YIELD**` 项。
+   */
+  private parseDomainQuery(view: ViewType): Query {
+    this.expectKw("SELECT");
+    const select: TopSelectItem[] = [];
+    const slotTokens = new Map<string, Token>();
+    do {
+      const tok = this.peek();
+      if (tok.type === "domain") {
+        this.advance();
+        select.push({ kind: "domain", name: tok.value, line: tok.line, col: tok.col });
+        if (this.isPunct("::")) {
+          throw this.err(this.peek(), "顶层 **SELECT** 只接受单级 <域> 或 $槽位$，不接受 <域>::字段");
+        }
+      } else if (tok.type === "variable") {
+        this.advance();
+        if (slotTokens.has(tok.value)) throw this.err(tok, `槽位 $${tok.value}$ 重复声明`);
+        slotTokens.set(tok.value, tok);
+        select.push({ kind: "slot", name: tok.value, line: tok.line, col: tok.col });
+      } else {
+        throw this.err(tok, `顶层 **SELECT** 只接受单级 <域> 或 $槽位$，实际为 ${describe(tok)}`);
+      }
+    } while (this.matchPunct(","));
+
+    const at = this.peek();
+    if (!(at.type === "punct" && at.value === "{")) {
+      const ref = select.find((s): s is DomainRef => s.kind === "domain");
+      if (ref) {
+        throw this.err(ref, `域 <${ref.name}> 未声明（缺少块 { }；顶层 **SELECT** 的 <域> 只能来自块内的子域声明）`);
+      }
+      throw this.err(at, `域扩展查询需要块 { }，实际为 ${describe(at)}`);
+    }
+
+    const block = this.parseBlock();
+    const trailing = this.peek();
+    if (trailing.type !== "eof") {
+      throw this.err(
+        trailing,
+        `多余的查询子句「${describe(trailing)}」（域扩展查询的块 { } 之后不应再有子句）`,
+      );
+    }
+
+    const plan = analyzeDomains(select, block, (pos, message) => this.err(pos, message));
+    return {
+      view,
+      withoutId: false,
+      // 以下旧字段在域模式下仅为占位：数据源与过滤都在子查询内（执行由 domains 分支接管）
+      select: "*",
+      from: { kind: "folder", path: "" },
+      where: null,
+      search: null,
+      while: null,
+      count: null,
+      sort: null,
+      limit: null,
+      domains: { select, block, plan },
+    };
+  }
+
+  /**
+   * block = "{" , { block_item } , "}"；block_item = subdomain | yield_clause。
+   * `**YIELD**` 同层至多一次且须有同层子域作为前件；它只出现在顶层块——
+   * 子域块内是 `sub_select` + 嵌套子域，不开放 `**YIELD**`（parseSubDomain 拦截）。
+   */
+  private parseBlock(): BlockItem[] {
+    this.expectPunct("{");
+    const items: BlockItem[] = [];
+    let yieldSeen: Token | null = null;
+    for (;;) {
+      const tok = this.peek();
+      if (tok.type === "punct" && tok.value === "}") {
+        this.advance();
+        return items;
+      }
+      if (tok.type === "eof") throw this.err(tok, "块 { 未闭合（需与 } 配对）");
+      if (tok.type === "punct" && tok.value === "{") {
+        items.push({ kind: "subdomain", node: this.parseSubDomain() });
+        continue;
+      }
+      if (tok.type === "marked" && tok.value === "YIELD") {
+        if (yieldSeen) throw this.err(tok, "**YIELD** 子句重复出现（同层至多一次）");
+        if (!items.some((item) => item.kind === "subdomain")) {
+          throw this.err(tok, "**YIELD** 需要同层已声明的子域作为前件（子域必须写在其之前）");
+        }
+        yieldSeen = tok;
+        items.push({ kind: "yield", node: this.parseYieldClause(tok) });
+        continue;
+      }
+      throw this.err(tok, `块内只能写子域 { … } **AS** <域> 或 **YIELD** 项，实际为 ${describe(tok)}`);
+    }
+  }
+
+  /** subdomain = "{" , sub_select , { subdomain } , "}" , **AS** , DOMAIN（**AS** 必填） */
+  private parseSubDomain(): SubDomain {
+    this.expectPunct("{");
+    const sub = this.parseSubSelect();
+    const children: SubDomain[] = [];
+    while (this.isPunct("{")) children.push(this.parseSubDomain());
+    if (this.isMarked("YIELD")) {
+      throw this.err(
+        this.peek(),
+        "**YIELD** 只能写在顶层块（子域块内为子查询 + 嵌套子域**AS** <域>，不接受 **YIELD**）",
+      );
+    }
+    this.expectPunct("}");
+    if (!this.matchKw("AS")) {
+      throw this.err(this.peek(), "子域必须写 **AS** <域>（省略 **AS** 即非子域，无名字即无法被引用）");
+    }
+    const nameTok = this.peek();
+    if (nameTok.type !== "domain") {
+      throw this.err(nameTok, `**AS** 后应为 <域>（如 **AS** <人物>），实际为 ${describe(nameTok)}`);
+    }
+    this.advance();
+    return { sub, children, name: nameTok.value, line: nameTok.line, col: nameTok.col };
+  }
+
+  /**
+   * sub_select = **SELECT** select_list **FROM** source [ **WHERE** expr ]
+   * select_list = select_field {, select_field}；select_field = IDENT | DOMAIN。
+   * **FROM** 必填（唯一数据来源）；子查询内只支持这三个子句（旧查询算法的其余子句不开放）。
+   */
+  private parseSubSelect(): SubQuery {
+    this.expectKw("SELECT");
+    const select: SubFieldRef[] = [];
+    do {
+      const tok = this.peek();
+      if (tok.type === "domain") {
+        this.advance();
+        select.push({ kind: "domain", name: tok.value, line: tok.line, col: tok.col });
+        if (this.isPunct("::")) {
+          throw this.err(this.peek(), "子查询 **SELECT** 只接受单级 <域>，不接受 <域>::字段");
+        }
+      } else if (tok.type === "ident") {
+        this.advance();
+        select.push({ kind: "field", name: tok.value });
+      } else {
+        throw this.err(tok, `子查询 **SELECT** 字段应为裸标识符或单级 <域>，实际为 ${describe(tok)}`);
+      }
+    } while (this.matchPunct(","));
+
+    if (!this.isMarked("FROM")) {
+      throw this.err(this.peek(), "子查询缺少 **FROM** 子句（**FROM** 是唯一数据来源，必须出现）");
+    }
+    this.advance();
+    const from = this.parseSource();
+
+    let where: Expr | null = null;
+    if (this.matchKw("WHERE")) {
+      this.inWhere = true;
+      try {
+        where = this.parseExpr();
+      } finally {
+        this.inWhere = false;
+      }
+    }
+
+    const tok = this.peek();
+    if (tok.type === "marked" && SUBQUERY_REJECTED.has(tok.value)) {
+      throw this.err(tok, `子查询内只支持 **SELECT** / **FROM** / **WHERE**，不支持 **${tok.value}**`);
+    }
+    return { select, from, where };
+  }
+
+  /**
+   * yield_clause = **YIELD** yield_item {, yield_item }；
+   * yield_item = cross_ref yield_op cross_ref [ **AS** variable ]。
+   * `**AS**` 为硬约束：无 `**AS**` 即无绑定（该项计算照常执行，但不产生 $槽位$、不投影）。
+   */
+  private parseYieldClause(kw: Token): YieldClause {
+    this.advance(); // YIELD
+    const items: YieldItem[] = [];
+    do {
+      const start = this.peek();
+      const left = this.parseCrossRef();
+      const opTok = this.peek();
+      if (!(opTok.type === "marked" && (opTok.value === "IN" || opTok.value === "DIFF"))) {
+        throw this.err(
+          opTok,
+          `**YIELD** 项应为 <域>::字段 **IN**/**DIFF** <域>::字段，实际为 ${describe(opTok)}`,
+        );
+      }
+      this.advance();
+      const right = this.parseCrossRef();
+      let slot: string | null = null;
+      if (this.matchKw("AS")) {
+        const t = this.peek();
+        if (t.type !== "variable") {
+          throw this.err(t, `**YIELD** 项的 **AS** 必须为 $变量$（无 **AS** 即无绑定、不投影），实际为 ${describe(t)}`);
+        }
+        this.advance();
+        if (this.yieldSlots.has(t.value)) throw this.err(t, `槽位 $${t.value}$ 重复声明`);
+        this.yieldSlots.set(t.value, t);
+        slot = t.value;
+      }
+      items.push({
+        op: (opTok.value === "IN" ? "in" : "diff") as YieldOp,
+        left,
+        right,
+        slot,
+        line: start.line,
+        col: start.col,
+      });
+    } while (this.matchPunct(","));
+    return { items, line: kw.line, col: kw.col };
+  }
+
+  /** cross_ref = DOMAIN , "::" , IDENT（词法层已保证只允许一级） */
+  private parseCrossRef(): CrossRef {
+    const domTok = this.peek();
+    if (domTok.type !== "domain") {
+      throw this.err(domTok, `跨域引用应为 <域>::字段（一级），实际为 ${describe(domTok)}`);
+    }
+    this.advance();
+    if (!this.matchPunct("::")) {
+      throw this.err(this.peek(), `域 <${domTok.value}> 后应为 ::字段（跨域引用形如 <域>::字段）`);
+    }
+    const fieldTok = this.peek();
+    if (fieldTok.type !== "ident") {
+      throw this.err(fieldTok, `:: 右侧应为字段名（裸标识符），实际为 ${describe(fieldTok)}`);
+    }
+    this.advance();
+    return { domain: domTok.value, field: fieldTok.value, line: domTok.line, col: domTok.col };
+  }
+
+  /** **YIELD** 项输出槽位登记（同层 `**AS** $变量$` 互不相同） */
+  private yieldSlots = new Map<string, Token>();
 
   /* ---------- COUNT（DSQL 2.3 分类计数） ---------- */
 
@@ -805,6 +1080,9 @@ class Parser {
       this.advance();
       return { kind: "field", path: tok.value };
     }
+    if (tok.type === "marked" && (tok.value === "IN" || tok.value === "DIFF")) {
+      throw this.err(tok, `**${tok.value}** 只能写在 **YIELD** 项中（缺少 **YIELD** 作为前件）`);
+    }
     if (tok.type === "marked" && FUNCTIONS.has(tok.value)) {
       this.advance();
       this.expectPunct("(");
@@ -867,6 +1145,11 @@ class Parser {
     return false;
   }
 
+  private isPunct(value: string): boolean {
+    const tok = this.peek();
+    return tok.type === "punct" && tok.value === value;
+  }
+
   private expectKw(word: string): void {
     if (!this.matchKw(word)) {
       const tok = this.peek();
@@ -908,15 +1191,194 @@ class Parser {
     throw this.err(tok, what);
   }
 
-  private err(tok: Token, message: string): QueryParseError {
-    return new QueryParseError(message, tok.line, tok.col);
+  private err(at: { line: number; col: number }, message: string): QueryParseError {
+    return new QueryParseError(message, at.line, at.col);
   }
 }
+
+/** 子查询区间内不接受的旧算法子句关键词（域扩展只开放 SELECT / FROM / WHERE） */
+const SUBQUERY_REJECTED = new Set([
+  "SORT", "LIMIT", "WHILE", "SEARCH", "COUNT", "WITHOUT", "YIELD", "ASC", "DESC", "BY", "IN", "DIFF",
+]);
 
 function describe(tok: Token): string {
   if (tok.type === "eof") return "文件结束";
   if (tok.type === "marked") return `**${tok.value}**`;
   if (tok.type === "op") return `%${tok.value}%`;
   if (tok.type === "extfilter") return `[${tok.value.trim()}]`;
+  if (tok.type === "domain") return `<${tok.value}>`;
   return `「${tok.value}」`;
+}
+
+/* ---------- 域扩展语义分析（DSQL 2.6） ---------- */
+
+/** 单层块作用域：本层声明的直接子域（名字 → 绑定 id）与声明文本序 */
+interface BlockScope {
+  parent: BlockScope | null;
+  defs: Map<string, number>;
+  /** 绑定 id → 该子域在本块条目中的下标（**YIELD** 严格查找用） */
+  order: Map<number, number>;
+}
+
+/** 错误发射器（parser 注入，带行列号） */
+type DomainErr = (at: { line: number; col: number }, message: string) => Error;
+
+/**
+ * 域扩展语义分析：建立域绑定表（作用域链 + 同层文本位置）、解析全部域引用、
+ * 判定 ROW / AGG 槽位并算出展开域集合。
+ *
+ * 两条查找路径（§3.3：同一「产生完成即见律」在两种扫描位置的表现）：
+ * - **SELECT 宽松**：`<x>` 已在作用域链内闭合即可，不限文本位置（投影遍在扫描完成后执行）；
+ * - **YIELD 严格**：同层 `<x>` 的闭合点须在文本上位于该 **YIELD** 之前（展开阶段扫描中途执行）。
+ *
+ * @param select - 顶层 `**SELECT**` 项
+ * @param block - 顶层块条目（保持文本序）
+ * @param err - 错误构造器（parser 注入）
+ * @returns 域计划（绑定表 / 投影列 / YIELD 项 / 展开域）
+ */
+function analyzeDomains(select: TopSelectItem[], block: BlockItem[], err: DomainErr): DomainPlan {
+  const bindings: DomainBinding[] = [];
+  /** 每个绑定自身的子块作用域（无嵌套子域时为空作用域） */
+  const ownScope: BlockScope[] = [];
+  /** 每个绑定的 `<域>` token 位置（错误定位） */
+  const positions: { line: number; col: number }[] = [];
+  /** 全树出现过的域名（区分「未声明域」与「内层不外暴露」） */
+  const allNames = new Set<string>();
+
+  const walk = (
+    items: BlockItem[],
+    parent: BlockScope | null,
+    parentId: number | null,
+    depth: number,
+  ): BlockScope => {
+    const scope: BlockScope = { parent, defs: new Map(), order: new Map() };
+    items.forEach((item, index) => {
+      if (item.kind !== "subdomain") return;
+      const node = item.node;
+      if (scope.defs.has(node.name)) {
+        throw err(
+          { line: node.line, col: node.col },
+          `域 <${node.name}> 在同层重复声明（同名域在不同层各为独立绑定）`,
+        );
+      }
+      const id = bindings.length;
+      bindings.push({
+        id, name: node.name, parent: parentId, depth, order: 0, sub: node.sub, refs: [], children: [],
+      });
+      scope.defs.set(node.name, id);
+      scope.order.set(id, index);
+      positions[id] = { line: node.line, col: node.col };
+      allNames.add(node.name);
+      const inner = walk(
+        node.children.map((child): BlockItem => ({ kind: "subdomain", node: child })),
+        scope,
+        id,
+        depth + 1,
+      );
+      ownScope[id] = inner;
+      bindings[id].children = [...inner.defs.values()];
+    });
+    return scope;
+  };
+  const root = walk(block, null, null, 0);
+
+  const chainOf = (scope: BlockScope | null): BlockScope[] => {
+    const out: BlockScope[] = [];
+    for (let cur = scope; cur; cur = cur.parent) out.push(cur);
+    return out;
+  };
+
+  /** 作用域链查找；strict 给出「同层且文本序须早于该 YIELD」的约束 */
+  const resolve = (
+    name: string,
+    chain: BlockScope[],
+    strict: { scope: BlockScope; index: number } | null,
+    at: { line: number; col: number },
+  ): number => {
+    for (const scope of chain) {
+      const id = scope.defs.get(name);
+      if (id === undefined) continue;
+      if (strict && scope === strict.scope && (scope.order.get(id) ?? 0) >= strict.index) {
+        throw err(at, `<${name}> 未在该 **YIELD** 之前声明（**YIELD** 只见其之前已闭合的同层子域）`);
+      }
+      return id;
+    }
+    if (allNames.has(name)) {
+      throw err(at, `<${name}> 不向外暴露（内层子域只在声明它的块内可见）`);
+    }
+    throw err(at, `域 <${name}> 未声明（子域须写 **AS** <${name}> 后才可被引用）`);
+  };
+
+  // ---- 子查询 SELECT 的域引用（宽松：不限文本位置）→ 依赖图 ----
+  const deps: number[][] = bindings.map(() => []);
+  for (const binding of bindings) {
+    const chain = chainOf(ownScope[binding.id]);
+    binding.refs = binding.sub.select.map((field) =>
+      field.kind === "domain" ? resolve(field.name, chain, null, field) : -1,
+    );
+    for (const target of binding.refs) if (target >= 0) deps[binding.id].push(target);
+  }
+
+  // ---- 循环依赖检测 + 求值顺序（拓扑序）----
+  const state = new Array<number>(bindings.length).fill(0); // 0 未访问 / 1 访问中 / 2 完成
+  const stack: number[] = [];
+  let seq = 0;
+  const visit = (id: number): void => {
+    if (state[id] === 2) return;
+    if (state[id] === 1) {
+      const cycle = [...stack.slice(stack.indexOf(id)), id].map((i) => `<${bindings[i].name}>`).join(" → ");
+      throw err(positions[id], `域引用存在循环依赖（${cycle}）`);
+    }
+    state[id] = 1;
+    stack.push(id);
+    for (const dep of deps[id]) visit(dep);
+    stack.pop();
+    state[id] = 2;
+    bindings[id].order = seq++;
+  };
+  for (const binding of bindings) visit(binding.id);
+
+  // ---- YIELD 项（严格查找：同层子域须写在前面）----
+  const yields: DomainYieldItem[] = [];
+  block.forEach((item, index) => {
+    if (item.kind !== "yield") return;
+    const strict = { scope: root, index };
+    for (const node of item.node.items) {
+      const left = resolveCrossRef(node.left, strict);
+      const right = resolveCrossRef(node.right, strict);
+      yields.push({ op: node.op, left, right, slot: node.slot });
+    }
+  });
+
+  function resolveCrossRef(ref: CrossRef, strict: { scope: BlockScope; index: number }) {
+    return { def: resolve(ref.domain, chainOf(root), strict, ref), field: ref.field };
+  }
+
+  // ---- 投影列 ----
+  const columns: DomainColumn[] = [];
+  for (const item of select) {
+    if (item.kind === "domain") {
+      columns.push({
+        kind: "domain",
+        def: resolve(item.name, chainOf(root), null, item),
+        alias: `<${item.name}>`,
+      });
+    } else {
+      columns.push({ kind: "slot", slot: item.name, alias: `$${item.name}$` });
+    }
+  }
+
+  // ---- 行展开域：YIELD 的 ROW 位（IN 两侧 / DIFF 右侧）；无 YIELD → 根块全部子域 ----
+  const rowSet = new Set<number>();
+  for (const y of yields) {
+    if (y.op === "in") {
+      rowSet.add(y.left.def);
+      rowSet.add(y.right.def);
+    } else {
+      rowSet.add(y.right.def);
+    }
+  }
+  if (yields.length === 0) for (const id of root.defs.values()) rowSet.add(id);
+
+  return { bindings, columns, yields, rowDomains: [...rowSet].sort((a, b) => a - b) };
 }

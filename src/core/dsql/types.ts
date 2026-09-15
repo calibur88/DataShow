@@ -57,7 +57,13 @@ export interface DataRow {
   fields: Record<string, FieldValue>;
 }
 
-export type FieldValue = string | number | boolean | FieldValue[] | null;
+/**
+ * 域对象（DSQL 2.6）：`<域>` 子查询投影出的一行 = 一组「字段名 → 值」。
+ * 仅由域扩展查询（块 `{ }` 语法）产出，frontmatter 不会出现该形态。
+ */
+export type FieldObject = { [key: string]: FieldValue };
+
+export type FieldValue = string | number | boolean | FieldValue[] | FieldObject | null;
 
 /**
  * DSQL 1.5 empty 值哨兵：字段存在但未赋值（frontmatter `字段:`，冒号后无内容）。
@@ -65,3 +71,29 @@ export type FieldValue = string | number | boolean | FieldValue[] | null;
  * 比较 → 同一性，真值为假）。
  */
 export const EMPTY = Symbol("DSQL:empty") as unknown as FieldValue;
+
+/* ================= DSQL 2.6 域扩展：显示层标记（语言层不做任何判断） ================= */
+
+/**
+ * 域扩展 `$槽位$` 值的显示层标记。
+ *
+ * 域扩展产出两类值，各有一套输出口径，与其余查询的既有口径不同：
+ * - **域对象**（唯一的对象值形态，天然可辨）→ `[字段:值][字段:值]`；
+ * - **`$槽位$` 值**（`**IN**` 的布尔 / `**DIFF**` 的数组）→ `true` / `金针,铁针`（`,` 无空格）。
+ * 后者与普通查询里的布尔（`是`/`否`）、数组（`, ` 连接）形态完全相同，`formatCell` 仅凭值
+ * 无法分辨来源，故在域扩展合成行时包一层本标记：`formatCell` 按域口径渲染，
+ * `toJsonValue`（JSON 导出）解包为原值——**解析 / 求值 / 执行逻辑均不读它**。
+ */
+export class DomainSlotValue {
+  constructor(readonly value: FieldValue) {}
+}
+
+/**
+ * 域扩展槽位值标记判定（`render/format` 与 `render/export` 共用）。
+ *
+ * @param v - 待判定的值
+ * @returns 是否为域扩展槽位值标记
+ */
+export function isDomainSlotValue(v: unknown): v is DomainSlotValue {
+  return v instanceof DomainSlotValue;
+}

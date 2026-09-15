@@ -538,6 +538,71 @@
       "description": "起始的绝对值不影响结果（[2, 5] 与 [0, 3] 等价，同为 3 轮）；TOTAL 计匹配后行集 3，COUNT 在 WHERE 后按槽位分别计数 3 / 3。",
       "sql": "**TABLE_VIEW** **SELECT**\n  **TOTAL** 1 **AS** $全量$,\n  $有名字$,\n  $有阵营$\n**FROM** \"示例/多变量抽取示例\"\n**WHILE** [2, 5]\n**SEARCH**\n  '姓名：(.+)' **AS** 姓名,\n  '阵营：(.+)' **AS** 阵营\n**COUNT** 姓名 %!=% null **AS** $有名字$, 阵营 %!=% null **AS** $有阵营$",
       "viewType": ""
+    },
+    {
+      "id": "dm1-single",
+      "name": "基础·单子域",
+      "type": "域示例",
+      "description": "单子域无 **YIELD**：顶层 **SELECT** <人物> 输出整域行对象，行数 = |人物| = 2（傻青 / 王五）。",
+      "sql":
+      "**TABLE_VIEW** **SELECT** <人物>\n{\n  {\n    **SELECT** name, wolf\n    **FROM** \"示例/域示例/人物\"\n    **WHERE** type %==% '人物'\n  } **AS** <人物>\n}",
+      "viewType": ""
+    },
+    {
+      "id": "dm2-cartesian",
+      "name": "基础·多子域笛卡尔积",
+      "type": "域示例",
+      "description": "两子域同层并列且无 **YIELD** → 所有子域 ROW，行数 = |人物| × |武器| = 2 × 3 = 6。",
+      "sql":
+      "**TABLE_VIEW** **SELECT** <人物>, <武器>\n{\n  {\n    **SELECT** name, wolf\n    **FROM** \"示例/域示例/人物\"\n  } **AS** <人物>\n\n  {\n    **SELECT** name\n    **FROM** \"示例/域示例/武器\"\n  } **AS** <武器>\n}",
+      "viewType": ""
+    },
+    {
+      "id": "dm3-in",
+      "name": "IN·逐元素判断",
+      "type": "域示例",
+      "description": "**IN** 槽位 (ROW, ROW)：左参逐行取单值、右参作集合，逐行输出布尔；行数 = |人物| × |武器| = 6。",
+      "sql":
+      "**TABLE_VIEW** **SELECT** <人物>, <武器>, $人物有武器$\n{\n  {\n    **SELECT** name, wolf\n    **FROM** \"示例/域示例/人物\"\n    **WHERE** type %==% '人物'\n  } **AS** <人物>\n\n  {\n    **SELECT** name\n    **FROM** \"示例/域示例/武器\"\n    **WHERE** type %==% '武器'\n  } **AS** <武器>\n\n  **YIELD**\n    <武器>::name **IN** <人物>::wolf **AS** $人物有武器$\n}",
+      "viewType": ""
+    },
+    {
+      "id": "dm4-diff",
+      "name": "DIFF·差集",
+      "type": "域示例",
+      "description": "**DIFF** 左参取全集、右参逐行：输出「武器全集 \\ 当前人物 wolf」，保留左参顺序；行数 = |人物|（AGG 不贡献行）。",
+      "sql":
+      "**TABLE_VIEW** **SELECT** <人物>, $未引用$\n{\n  {\n    **SELECT** name\n    **FROM** \"示例/域示例/武器\"\n    **WHERE** type %==% '武器'\n  } **AS** <武器>\n\n  {\n    **SELECT** name, wolf\n    **FROM** \"示例/域示例/人物\"\n    **WHERE** type %==% '人物'\n  } **AS** <人物>\n\n  **YIELD**\n    <武器>::name **DIFF** <人物>::wolf **AS** $未引用$\n}",
+      "viewType": ""
+    },
+    {
+      "id": "dm5-mixed",
+      "name": "混合·IN + DIFF",
+      "type": "域示例",
+      "description": "律表 ROW ∘ AR = ROW → 整体按行展开；第二项 **DIFF** 以「剧情 chart 全集」减当前人物名。行数 = |剧情| × |人物| = 2。",
+      "sql":
+      "**TABLE_VIEW** **SELECT** <剧情>, <人物>, $在剧情里$, $非剧情人物$\n{\n  {\n    **SELECT** name, chart\n    **FROM** \"示例/域示例/剧情\"\n    **WHERE** name %==% '苍蓝传'\n  } **AS** <剧情>\n\n  {\n    **SELECT** name\n    **FROM** \"示例/域示例/人物\"\n    **WHERE** type %==% '人物'\n  } **AS** <人物>\n\n  **YIELD**\n    <人物>::name **IN** <剧情>::chart      **AS** $在剧情里$,\n    <剧情>::chart **DIFF** <人物>::name    **AS** $非剧情人物$\n}",
+      "viewType": ""
+    },
+    {
+      "id": "dm6-nested",
+      "name": "嵌套·同名域不遮蔽",
+      "type": "域示例",
+      "description": "内层 <武器> 只对 <人物> 块内可见，与外层 <武器> 是不同绑定；**YIELD** 引用的是外层 <武器>（同层、写在前，合法）。行数 = 2 × 3 = 6。",
+      "sql":
+      "**TABLE_VIEW** **SELECT** <人物>, <武器>, $人物有武器$\n{\n  {\n    **SELECT** name, wolf\n    **FROM** \"示例/域示例/人物\"\n    **WHERE** type %==% '人物'\n\n    {\n      **SELECT** name\n      **FROM** \"示例/域示例/内层\"\n      **WHERE** type %==% '武器'\n    } **AS** <武器>\n  } **AS** <人物>\n\n  {\n    **SELECT** name\n    **FROM** \"示例/域示例/武器\"\n    **WHERE** type %==% '武器'\n  } **AS** <武器>\n\n  **YIELD**\n    <武器>::name **IN** <人物>::wolf **AS** $人物有武器$\n}",
+      "viewType": ""
+    },
+    {
+      "id": "dm7-list-three",
+      "name": "视图·列表三域展开",
+      "type": "域示例",
+      "description": "**LIST_VIEW** 下的三域复杂查询：ROW 位涉及 {剧情, 人物, 武器}，行数 = 1 × 2 × 3 = 6；两项 **IN** 与一项 **DIFF** 同板对照。",
+      "sql":
+      "**LIST_VIEW** **SELECT** <剧情>, <人物>, <武器>,\n       $人物武器绑定$, $剧情人物$, $未引用$\n{\n  {\n    **SELECT** name, chart\n    **FROM** \"示例/域示例/剧情\"\n    **WHERE** name %==% '苍蓝传'\n  } **AS** <剧情>\n\n  {\n    **SELECT** name, wolf\n    **FROM** \"示例/域示例/人物\"\n    **WHERE** type %==% '人物'\n  } **AS** <人物>\n\n  {\n    **SELECT** name\n    **FROM** \"示例/域示例/武器\"\n    **WHERE** type %==% '武器'\n  } **AS** <武器>\n\n  **YIELD**\n    <武器>::name **IN** <人物>::wolf       **AS** $人物武器绑定$,\n    <人物>::name **IN** <剧情>::chart      **AS** $剧情人物$,\n    <武器>::name **DIFF** <人物>::wolf     **AS** $未引用$\n}",
+      "viewType": ""
     }
   ]
 }
+
+

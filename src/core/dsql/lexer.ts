@@ -1,12 +1,14 @@
 /**
  * @module dsql/lexer
- * @description DSQL 分词器：**WORD** / %运算符% / 字符串 / 路径 / [ext] / 裸标识符 / $变量$
+ * @description DSQL 分词器：**WORD** / %运算符% / 字符串 / 路径 / [ext] / 裸标识符 / $变量$ / <域> / 块括号
  *
  * 标记体系（按字面实现）：
  * - 关键词/内置函数：**WORD** 包裹（关键词约定全大写，函数约定小写）
  * - 运算符：%op% 包裹（%==% %!=% %>=% %<=% %>% %<% %||% %+% %-% %*% %/% %%% %^%）
  * - 路径："..."（双引号）；字符串：'...'（单引号）
  * - [...] 方括号原子：[...] 原样收集（WHERE 内为 [ext] 后缀过滤、**WHILE** 后为迭代边界，parser 按子句赋予语义）
+ * - <域> 域标记（DSQL 2.6）：与 **..** / %..% / '..' / ".." / $..$ / [..] 并列的独立名字空间
+ * - :: 跨域引用连接符（<域>::字段，只允许一级）；{ } 块括号
  * - 裸标识符：字段名（支持 Unicode 与带点路径 file.name / this.状态）
  * - 裸字面量：true / false / null
  *
@@ -22,8 +24,9 @@ export type TokenType =
   | "path"     // "路径"
   | "number"
   | "op"       // %op%
-  | "punct"    // ( ) , # *
+  | "punct"    // ( ) , # * { } ::
   | "extfilter" // [ext] 后缀过滤（value 为括号内原样文本，不做归一化）
+  | "domain"   // <域>（DSQL 2.6，value 为域名的裸名）
   | "eof";
 
 export interface Token {
@@ -51,6 +54,9 @@ export const KEYWORDS = new Set([
   "SEARCH",
   "WHILE",
   "COUNT",
+  "YIELD",
+  "IN",
+  "DIFF",
 ]);
 
 /** DSQL 1.4：聚合关键词（仅 SELECT 项合法，parser 单独拦截，不入 KEYWORDS 以免其他子句误吞） */
@@ -82,7 +88,9 @@ export class Lexer {
   constructor(private src: string) {}
 
   /**
-   * 分词至文件结束。
+   * 分词至文件结束，并对整条 token 序列做两项**词法层硬约束**校验
+   * （不得下放给 parser，§7「硬约束由词法层拦截」）：
+   * `::` 两侧形态（一级跨域引用）与块括号 `{ }` 配对。
    *
    * @returns token 序列（以 eof 结尾）
    */
@@ -91,7 +99,7 @@ export class Lexer {
     for (;;) {
       const tok = this.next();
       tokens.push(tok);
-      if (tok.type === "eof") return tokens;
+      if (tok.type === "eof") return validateTokens(tokens);
     }
   }
 
@@ -107,6 +115,7 @@ export class Lexer {
     if (ch === "%") return this.readOp(line, col);
     if (ch === "*") return this.readStar(line, col);
     if (ch === "[") return this.readExtFilter(line, col);
+    if (ch === "<") return this.readDomain(line, col);
     if (DIGIT.test(ch)) return this.readNumber(line, col);
     if (ch === "$") {
       const variable = this.tryReadVariable(line, col);
@@ -328,21 +337,104 @@ export class Lexer {
     return null;
   }
 
+  /**
+   * `<域>` 域标记（DSQL 2.6）：与 `**..**` / `%..%` / `'..'` / `".."` / `$..$` / `[..]` 并列的独立名字空间。
+   * 硬约束（词法层，不下放）：`<` 与 `>` 之间只允许一个 IDENT；未闭合或内容非单个标识符即词法错误。
+   * 与 `**` 标记同口径，不接受跨行。
+   */
+  private readDomain(line: number, col: number): Token {
+    this.pos++;
+    this.col++;
+    let name = "";
+    for (;;) {
+      if (this.pos >= this.src.length) {
+        throw new LexError("域标记未闭合（需以 > 结束，如 <人物>）", line, col);
+      }
+      const ch = this.src[this.pos];
+      if (ch === ">") {
+        this.pos++;
+        this.col++;
+        break;
+      }
+      if (ch === "\n") throw new LexError("域标记不能跨行", line, col);
+      name += ch;
+      this.pos++;
+      this.col++;
+    }
+    const IDENT_ONLY = /^[\p{L}_$][\p{L}\p{N}_$]*(\.[\p{L}_$][\p{L}\p{N}_$]*)*$/u;
+    if (!IDENT_ONLY.test(name)) {
+      throw new LexError(`域标记 <${name}> 内应为单个标识符（如 <人物>）`, line, col);
+    }
+    return { type: "domain", value: name, line, col };
+  }
+
   private readPunct(line: number, col: number): Token {
     const ch = this.src[this.pos];
     if (ch === ".") {
       // DSQL 1.5：NUMBER 小数点后必须至少一位数字，.5 为词法错误
       throw new LexError("数字不能以小数点开头（\".5\" 是词法错误）", line, col);
     }
-    if ("(),.#".includes(ch)) {
+    if (ch === ":" && this.src[this.pos + 1] === ":") {
+      this.pos += 2;
+      this.col += 2;
+      return { type: "punct", value: "::", line, col };
+    }
+    if ("(),.#{}".includes(ch)) {
       this.pos++;
       this.col++;
       return { type: "punct", value: ch, line, col };
     }
     throw new LexError(
-      `无法识别的字符「${ch}」（关键词需 ** 包裹、运算符需 % 包裹）`,
+      `无法识别的字符「${ch}」（关键词需 ** 包裹、运算符需 % 包裹、域需 <域> 包裹）`,
       line,
       col,
     );
   }
+}
+
+/**
+ * 词法层硬约束校验（整条 token 序列，见 §7「硬约束由词法层拦截」）：
+ * - `::` 左侧须为 `<域>`、右侧须为裸 IDENT —— `<域>::<域>` 与 `<域>::<域>::字段` 在此层拦截，
+ *   保证跨域引用只允许一级；
+ * - `{` / `}` 必须配对（未闭合 / 多余即词法错误）。
+ *
+ * @param tokens - 完整 token 序列（含结尾 eof）
+ * @returns 原序列（校验通过）
+ * @throws LexError 违反上述任一约束
+ */
+function validateTokens(tokens: Token[]): Token[] {
+  let depth = 0;
+  let open: Token | null = null;
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (tok.type === "punct" && tok.value === "::") {
+      const prev = tokens[i - 1];
+      const next = tokens[i + 1];
+      if (!prev || prev.type !== "domain") {
+        throw new LexError(":: 左侧须为域标记（如 <人物>::名字）", tok.line, tok.col);
+      }
+      if (!next || next.type === "domain") {
+        const shown = next ? `<${next.value}>` : "行尾";
+        throw new LexError(
+          `:: 右侧须 IDENT，${shown} 非法（跨域引用只允许一级 <域>::字段）`,
+          tok.line,
+          tok.col,
+        );
+      }
+      if (next.type !== "ident") {
+        throw new LexError(`:: 右侧须 IDENT（如 <人物>::名字），实际为「${next.value}」`, tok.line, tok.col);
+      }
+    } else if (tok.type === "punct" && tok.value === "{") {
+      if (depth === 0) open = tok;
+      depth++;
+    } else if (tok.type === "punct" && tok.value === "}") {
+      depth--;
+      if (depth < 0) throw new LexError("多余的 }（块括号 { } 不配对）", tok.line, tok.col);
+    }
+  }
+  if (depth > 0) {
+    const at = open ?? tokens[0];
+    throw new LexError("块 { 未闭合（需与 } 配对）", at.line, at.col);
+  }
+  return tokens;
 }

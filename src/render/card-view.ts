@@ -196,10 +196,10 @@ function columnColor(index: number): string {
 
 /**
  * R5 简化判定：仅裸 frontmatter 字段（不以 file./this. 开头）可编辑。
- * 一切表达式/聚合/变量/函数结果列一律只读。
+ * 一切表达式/聚合/变量结果列、以及域扩展的合成列（`readonly`）一律只读。
  */
-function isEditableField(col: { expr: { kind: string; path?: string }; total?: true }): boolean {
-  if (col.total) return false;
+function isEditableField(col: { expr: { kind: string; path?: string }; total?: true; readonly?: true }): boolean {
+  if (col.total || col.readonly) return false;
   if (col.expr.kind !== "field") return false;
   const p = col.expr.path ?? "";
   if (p.startsWith("file.")) return false;
