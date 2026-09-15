@@ -100,9 +100,9 @@ class Parser {
   private inWhere = false;
   private variableTokens = new Map<string, Token>();
   /**
-   * AS 列标签 → 首次定义的 token（标签互不相同校验用）。
-   * 同时收录裸标识符标签与 `$变量$` 标签（两者都产出同名列）；行字段池校验只用前者
-   * （`$变量$` 别名是变量池名称，见 §6.7 两池隔离）。
+   * AS 列标签（裸标识符）→ 首次定义的 token。
+   * 仅收录行字段池的裸标识符标签；`$变量$` 标签是变量池名称，走 varAliasTokens，
+   * 不与裸标签跨池判重（两池隔离，见 §6.7）。用于：裸标签互不相同校验、SEARCH 别名 vs 裸标签冲突检查。
    */
   private aliasTokens = new Map<string, Token>();
   private totalToken: Token | null = null;
@@ -213,7 +213,8 @@ class Parser {
     // parse 期静态可判定，无论子句书写顺序。
     if (search !== null) {
       for (const item of search) {
-        if (this.aliasTokens.has(item.alias) && !this.varAliasTokens.has(item.alias)) {
+        // aliasTokens 仅含裸标识符标签，故此处即为行字段池内冲突
+        if (this.aliasTokens.has(item.alias)) {
           throw this.err(
             this.searchAliasTokens.get(item.alias) ?? this.tokens[0],
             `SEARCH 别名 '${item.alias}' 与 SELECT 列标签冲突，请改用其他别名`,
@@ -531,12 +532,12 @@ class Parser {
         throw this.err(tok, `别名 '$${name}$' 重复定义（SELECT 内 **AS** 别名互不相同）`);
       }
       this.varAliasTokens.set(name, tok);
-    } else {
-      name = this.expectIdent("**AS** 后应为别名（标识符或 $变量$）").value;
+      // `$变量$` 别名属变量池，不与裸标识符标签跨池判重（两池隔离，§6.7）
+      return { name, isVar };
     }
+    name = this.expectIdent("**AS** 后应为别名（标识符或 $变量$）").value;
     if (this.aliasTokens.has(name)) {
-      const shown = isVar ? `$${name}$` : name;
-      throw this.err(tok, `别名 '${shown}' 重复定义（SELECT 内 **AS** 别名互不相同）`);
+      throw this.err(tok, `别名 '${name}' 重复定义（SELECT 内 **AS** 别名互不相同）`);
     }
     this.aliasTokens.set(name, tok);
     return { name, isVar };

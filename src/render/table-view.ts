@@ -9,6 +9,7 @@
 import { evaluateExpr, type ResultSet } from "@dsql/executor";
 import type { DataRow } from "@dsql/types";
 import { formatCell } from "@render/format";
+import { exportHeaders } from "@render/export";
 
 export interface TableViewArgs {
   result: ResultSet;
@@ -35,8 +36,8 @@ export function renderTableView(args: TableViewArgs): HTMLElement {
 
   const table = wrap.createEl("table", { cls: "datashow-result__table" });
   const headRow = table.createEl("thead").createEl("tr");
-  if (!withoutId) headRow.createEl("th", { text: "文件" });
-  for (const col of result.columns) headRow.createEl("th", { text: col.alias });
+  // 表头与导出共用同一消歧口径（同名列加 `_N` 后缀），避免预览与导出列名不一致
+  for (const header of exportHeaders(result, withoutId)) headRow.createEl("th", { text: header });
 
   const tbody = table.createEl("tbody");
   for (const row of result.rows) {

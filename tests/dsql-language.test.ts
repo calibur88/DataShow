@@ -208,6 +208,21 @@ test("**AS** $变量$ 与行字段同名不报错（变量池与行字段池隔�
   assert.equal(r.globals?.get("status"), 3); // Notes 目录 3 行
 });
 
+test("裸 AS 标签与 $变量$ 标签同名共存（跨池不判重，各成其列，DSQL 2.5）", () => {
+  // 裸 x（行字段池）+ 普通表达式 AS $x$（变量池）：跨池同名 → 各自成列，不报错
+  const r1 = exec(`**SELECT** owner **AS** x, priority %+% 1 **AS** $x$ **FROM** "Notes"`);
+  assert.deepEqual(r1.columns.map((c) => c.alias), ["x", "x"]);
+  // 反序
+  const r2 = exec(`**SELECT** priority %+% 1 **AS** $x$, owner **AS** x **FROM** "Notes"`);
+  assert.deepEqual(r2.columns.map((c) => c.alias), ["x", "x"]);
+  // 裸 x + TOTAL AS $x$
+  const r3 = exec(`**SELECT** owner **AS** x, **TOTAL** 1 **AS** $x$ **FROM** "Notes"`);
+  assert.deepEqual(r3.columns.map((c) => c.alias), ["x", "x"]);
+  // 裸 x + COUNT 槽位 $x$
+  const r4 = exec(`**SELECT** owner **AS** x, $x$ **FROM** "Notes" **COUNT** status %==% '进行中' **AS** $x$`);
+  assert.deepEqual(r4.columns.map((c) => c.alias), ["x", "x"]);
+});
+
 test("TOTAL **AS** 强制 $槽位$；自声明与裸槽位同名 → 重复声明（DSQL 2.3）", () => {
   const a = parseQuery(`**SELECT** **TOTAL** 1 **AS** $总人数$ **FROM** "M"`);
   assert.deepEqual((a.select as ColumnSel[])[0].alias, "总人数"); // TOTAL 自声明自投影

@@ -1,6 +1,6 @@
 # DataShow 整体架构
 
-> 本文是工程的权威架构说明。当前版本：插件 **2.2.0** · 语言 **DSQL 2.4** · minAppVersion **1.4.4**。
+> 本文是工程的权威架构说明。当前版本：插件 **2.2.1** · 语言 **DSQL 2.5** · minAppVersion **1.4.4**。
 
 ## 1. 项目定位
 
@@ -159,13 +159,13 @@ npm test        # 单测十三套件（零 Obsidian 依赖）
   > 验证看板 SQL 不能直接用 `node` 跑 TS：`src/core/dsql/parser.ts` 用了参数属性
   > （`constructor(private tokens: Token[])`），node 的 strip-only 模式不支持，必须经 esbuild 打包。
 
-- **测试套件**（共 295 例）：
+- **测试套件**（共 296 例）：
 
 | 套件 | 领域 | 例数 |
 |---|---|---|
 | `tests/feature.test.ts` | 功能示例（子句、排序、链接、布尔与日期、自动列） | 22 |
 | `tests/math.test.ts` | 数学示例（四则、乘方取模、函数、比较逻辑、TOTAL） | 32 |
-| `tests/dsql-language.test.ts` | DSQL 语言示例（词法、语法、错误路径、前件约束） | 30 |
+| `tests/dsql-language.test.ts` | DSQL 语言示例（词法、语法、错误路径、前件约束、两池隔离） | 31 |
 | `tests/store.test.ts` | 行仓库（增删改、订阅通知） | 4 |
 | `tests/ingest.test.ts` | 摄取层（重复键、摄取归一、摄取警告） | 5 |
 | `tests/indexer.test.ts` | 索引器（全量重建去重、删除 / 重命名清警告、resolved 不双跑） | 4 |
@@ -197,7 +197,7 @@ npm test        # 单测十三套件（零 Obsidian 依赖）
 
 ## 6. 现状
 
-**已实现**（插件 2.2.0 / DSQL 2.4）：DSQL 查询（表达式 / 函数 / 多级排序 / 自定义优先级 / 调试信息）、
+**已实现**（插件 2.2.1 / DSQL 2.5）：DSQL 查询（表达式 / 函数 / 多级排序 / 自定义优先级 / 调试信息）、
 TOTAL 全表聚合与 `$变量$` 派生体系、三种「无」语义分家（正常值 / 空容器 / 未赋值）、
 别名唯一性校验、frontmatter 重复键容错、`[ext]` 后缀过滤与非 md 数据源（自研 YAML 解析）、
 SEARCH 正文抽取子句（DSQL 2.4 起由 WHILE 驱动）、WHILE 循环驱动子句、
